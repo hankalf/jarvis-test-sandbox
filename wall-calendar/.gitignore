@@ -1,0 +1,10 @@
+# Local instance state -- never commit these.
+config.yaml
+data/
+photos/*
+!photos/.gitkeep
+
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/

@@ -1,0 +1,60 @@
+# Wall calendar display configuration.
+# Copy to config.yaml and edit. Paths are resolved relative to this file.
+
+timezone: America/New_York
+
+server:
+  host: 0.0.0.0
+  port: 8080
+
+# Read-only calendar feeds, polled on a timer.
+#
+# Google Calendar: Settings -> <calendar> -> "Secret address in iCal format".
+#   Treat that URL as a password; anyone with it can read the calendar.
+# iCloud: right-click the calendar -> Share Calendar -> Public Calendar,
+#   then swap the leading `webcal://` for `https://` (or leave it, we rewrite it).
+# Outlook/Office 365: Settings -> Calendar -> Shared calendars -> Publish, ICS link.
+calendars:
+  - name: Work
+    color: "#5b9cf8"
+    url: "https://calendar.google.com/calendar/ical/REPLACE_ME/basic.ics"
+  - name: Medical
+    color: "#f2884b"
+    url: "https://p01-caldav.icloud.com/published/2/REPLACE_ME"
+
+calendar_refresh_minutes: 15
+
+display:
+  # Mode the panel sits in when nobody is around: "photos" or "calendar".
+  default_mode: photos
+  # How long after the last presence ping before it drifts back to photos.
+  idle_timeout_seconds: 90
+  photo_dir: photos
+  photo_interval_seconds: 45
+  clock_24h: false
+  week_starts_on: sunday
+  # Days of agenda to render in the sidebar.
+  agenda_days: 14
+  quiet_hours:
+    # When enabled, the panel blanks entirely between these times. Presence
+    # still wakes it to the calendar, it just doesn't sit there glowing at 3am.
+    enabled: false
+    start: "23:00"
+    end: "06:30"
+
+presence:
+  # none   - always show the calendar, no presence handling at all
+  # http   - something else POSTs /api/presence (Home Assistant, a sensor script)
+  # gpio   - PIR/mmWave sensor on Raspberry Pi GPIO (needs gpiozero)
+  # serial - LD2410 mmWave over USB serial, works on Pi and x86 alike
+  backend: http
+  # Presence is "held" this long after the last detection, so a sensor that
+  # pulses rather than latching doesn't make the display flicker between modes.
+  hold_seconds: 20
+  gpio:
+    pin: 17
+  serial:
+    port: /dev/ttyUSB0
+    baud: 256000
+
+data_dir: data

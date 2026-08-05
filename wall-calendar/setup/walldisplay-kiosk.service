@@ -1,0 +1,26 @@
+[Unit]
+Description=Wall calendar kiosk browser
+After=walldisplay.service systemd-user-sessions.service
+Wants=walldisplay.service
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__DIR__
+
+# cage is a single-application Wayland compositor: no desktop, no panel, no
+# window decorations, and nothing for a stray touch to escape into.
+TTYPath=/dev/tty1
+PAMName=login
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+Environment=XDG_RUNTIME_DIR=/run/user/__UID__
+Environment=WLR_LIBINPUT_NO_DEVICES=1
+
+ExecStart=/usr/bin/cage -d -- __DIR__/setup/launch-browser.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target

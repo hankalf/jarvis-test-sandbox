@@ -1,0 +1,21 @@
+# Run the server in Docker -- useful when the calendar lives on a always-on box
+# (the Proxmox host, a NAS) and the Pi or stick is only the screen. Point the
+# kiosk at it with WALLDISPLAY_URL=http://<server>:8080.
+#
+# Presence must then be the `http` backend: a GPIO or serial sensor has to run
+# on whatever machine it is physically wired to, and POST to /api/presence.
+
+services:
+  walldisplay:
+    build: .
+    container_name: walldisplay
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # config.yaml lives here; inside the container it is /config/config.yaml.
+      - ./:/config:ro
+      - ./photos:/config/photos:ro
+      - ./data:/config/data
+    environment:
+      TZ: America/New_York

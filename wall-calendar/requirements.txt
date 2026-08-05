@@ -1,0 +1,13 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+httpx>=0.26
+icalendar>=5.0
+recurring-ical-events>=2.1
+pydantic>=2.5
+PyYAML>=6.0
+tzdata>=2024.1
+
+# Only needed for the matching presence backend; harmless to install anyway.
+# pyserial>=3.5      # presence.backend: serial  (LD2410 mmWave over USB)
+# gpiozero>=2.0      # presence.backend: gpio    (Raspberry Pi only)
+# lgpio>=0.2         # gpiozero's pin driver on Pi 5

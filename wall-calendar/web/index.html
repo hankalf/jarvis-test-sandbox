@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Wall Calendar</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%235b9cf8'/></svg>">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- Picture-frame mode. Two stacked images so we can crossfade between them. -->
+<section id="photo-layer" class="layer" aria-hidden="true">
+  <div class="photo-stage">
+    <img class="photo" id="photo-a" alt="">
+    <img class="photo" id="photo-b" alt="">
+  </div>
+  <div class="photo-vignette"></div>
+  <!-- Drifts slowly around the screen so a static clock never burns in. -->
+  <div class="photo-overlay" id="photo-overlay">
+    <div class="photo-time" id="photo-time">--:--</div>
+    <div class="photo-date" id="photo-date"></div>
+    <div class="photo-next" id="photo-next"></div>
+  </div>
+  <div class="photo-empty" id="photo-empty" hidden>
+    <p>No photos yet.</p>
+    <p class="muted">Drop images into the <code>photos/</code> folder.</p>
+  </div>
+</section>
+
+<!-- Calendar mode. -->
+<section id="calendar-layer" class="layer">
+  <header class="topbar">
+    <div class="clock-block">
+      <div class="clock" id="clock">--:--</div>
+      <div class="today-date" id="today-date"></div>
+    </div>
+    <nav class="views" id="views">
+      <button class="view-btn is-active" data-view="today">Today</button>
+      <button class="view-btn" data-view="week">Week</button>
+      <button class="view-btn" data-view="month">Month</button>
+    </nav>
+    <div class="actions">
+      <button class="icon-btn" id="btn-prev" title="Previous">&#8249;</button>
+      <button class="icon-btn" id="btn-today" title="Jump to today">&#9679;</button>
+      <button class="icon-btn" id="btn-next" title="Next">&#8250;</button>
+      <button class="icon-btn accent" id="btn-add" title="Add an appointment">+</button>
+      <button class="icon-btn" id="btn-photos" title="Back to photos">&#9635;</button>
+    </div>
+  </header>
+
+  <div class="range-label" id="range-label"></div>
+
+  <main id="view-root"></main>
+
+  <footer class="statusbar">
+    <div class="legend" id="legend"></div>
+    <div class="status" id="status"></div>
+  </footer>
+</section>
+
+<!-- Slide-up sheet used for both event details and the add form. -->
+<div class="scrim" id="scrim" hidden></div>
+<div class="sheet" id="sheet" hidden role="dialog" aria-modal="true"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

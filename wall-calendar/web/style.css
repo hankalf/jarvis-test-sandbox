@@ -1,0 +1,432 @@
+/* Wall calendar kiosk styling.
+   Assumptions baked in: viewed from a few feet away, touched with fingers not
+   a mouse, and on for 16 hours a day. So: large type, 56px minimum touch
+   targets, dark background, no pure white and no permanently static bright
+   elements. */
+
+:root {
+  --bg: #0a0c11;
+  --surface: #141822;
+  --surface-2: #1d2230;
+  --line: #2a3140;
+  --text: #e8ecf5;
+  --text-dim: #98a1b5;
+  --accent: #5b9cf8;
+  --danger: #e8697d;
+  --radius: 18px;
+  --tap: 56px;
+  --fade: 900ms;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  cursor: none; /* kiosk: no mouse attached */
+}
+
+button, input, select, textarea { font: inherit; color: inherit; }
+
+/* Every event is a <button> for touch and accessibility, so neutralise the
+   UA button look once rather than in each rule below. */
+.event-row, .allday-chip, .week-event, .month-chip {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+}
+
+.muted { color: var(--text-dim); }
+
+/* --- layer switching ---------------------------------------------------- */
+
+.layer {
+  position: fixed;
+  inset: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity var(--fade) ease;
+}
+.layer.is-visible { opacity: 1; visibility: visible; pointer-events: auto; }
+
+/* Quiet hours: everything off, but the page keeps running. */
+body.mode-off .layer { opacity: 0 !important; visibility: hidden !important; }
+body.mode-off { background: #000; }
+
+/* --- photo frame -------------------------------------------------------- */
+
+#photo-layer { background: #000; }
+
+.photo-stage { position: absolute; inset: 0; }
+
+.photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 1600ms ease;
+  will-change: opacity, transform;
+}
+.photo.is-shown { opacity: 1; animation: kenburns 48s ease-in-out infinite alternate; }
+
+@keyframes kenburns {
+  from { transform: scale(1.0) translate3d(0, 0, 0); }
+  to   { transform: scale(1.08) translate3d(-1.2%, -1.2%, 0); }
+}
+
+/* Keeps light photos from washing out the clock. */
+.photo-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 90% at 50% 45%, transparent 45%, rgba(0, 0, 0, 0.65) 100%);
+  pointer-events: none;
+}
+
+.photo-overlay {
+  position: absolute;
+  left: 6vw;
+  bottom: 8vh;
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.85);
+  transition: left 3s ease, bottom 3s ease, top 3s ease, right 3s ease;
+  pointer-events: none;
+}
+.photo-time { font-size: clamp(3.5rem, 11vw, 9rem); font-weight: 200; line-height: 1; letter-spacing: -0.02em; }
+.photo-date { font-size: clamp(1rem, 2.6vw, 2rem); font-weight: 300; color: #dfe5f2; margin-top: 0.4rem; }
+.photo-next { font-size: clamp(0.9rem, 2vw, 1.5rem); color: #b9c3d6; margin-top: 1rem; max-width: 60vw; }
+
+.photo-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  gap: 0.5rem;
+  color: var(--text-dim);
+}
+/* `display: grid` above would otherwise beat the UA's [hidden] rule. */
+.photo-empty[hidden] { display: none; }
+.photo-empty code { background: var(--surface-2); padding: 0.15em 0.45em; border-radius: 6px; }
+
+/* --- calendar chrome ---------------------------------------------------- */
+
+#calendar-layer {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  padding: clamp(0.75rem, 2vw, 1.75rem);
+  gap: 0.75rem;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.clock { font-size: clamp(2rem, 5vw, 3.75rem); font-weight: 250; line-height: 1; letter-spacing: -0.02em; }
+.today-date { color: var(--text-dim); font-size: clamp(0.85rem, 1.6vw, 1.2rem); margin-top: 0.25rem; }
+
+.views { display: flex; gap: 0.4rem; background: var(--surface); padding: 0.35rem; border-radius: 999px; }
+.view-btn {
+  min-height: var(--tap);
+  padding: 0 clamp(1rem, 2.5vw, 1.9rem);
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: clamp(0.95rem, 1.7vw, 1.25rem);
+  transition: background 160ms ease, color 160ms ease;
+}
+.view-btn.is-active { background: var(--surface-2); color: var(--text); }
+
+.actions { display: flex; gap: 0.4rem; }
+.icon-btn {
+  width: var(--tap);
+  height: var(--tap);
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 1.6rem;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  transition: background 160ms ease, transform 120ms ease;
+}
+.icon-btn:active { transform: scale(0.92); }
+.icon-btn.accent { background: var(--accent); color: #05070c; font-weight: 600; }
+
+.range-label {
+  font-size: clamp(1rem, 2.2vw, 1.6rem);
+  font-weight: 300;
+  color: var(--text-dim);
+  min-height: 1.2em;
+}
+
+#view-root { overflow: hidden; min-height: 0; }
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  flex-wrap: wrap;
+}
+.legend { display: flex; gap: 0.9rem; flex-wrap: wrap; }
+.legend span { display: inline-flex; align-items: center; gap: 0.4rem; }
+.dot { width: 0.65em; height: 0.65em; border-radius: 50%; background: var(--text-dim); }
+.status.is-warning { color: #f2b44b; }
+
+/* --- today view --------------------------------------------------------- */
+
+.today-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: clamp(0.75rem, 2vw, 1.5rem);
+  height: 100%;
+  min-height: 0;
+}
+@media (orientation: portrait), (max-width: 900px) {
+  .today-grid { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+}
+
+.panel {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: clamp(0.75rem, 1.8vw, 1.4rem);
+  overflow-y: auto;
+  min-height: 0;
+  scrollbar-width: none;
+}
+.panel::-webkit-scrollbar { display: none; }
+
+.panel-title {
+  font-size: clamp(0.75rem, 1.3vw, 0.95rem);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+  margin: 0 0 0.9rem;
+}
+
+.event-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.9rem;
+  align-items: start;
+  padding: 0.85rem 0.7rem;
+  min-height: var(--tap);
+  border-radius: 12px;
+  border-left: 5px solid var(--row-color, var(--text-dim));
+  background: var(--surface-2);
+  margin-bottom: 0.55rem;
+  transition: transform 120ms ease;
+}
+.event-row:active { transform: scale(0.985); }
+.event-row.is-past { opacity: 0.42; }
+.event-row.is-now { box-shadow: inset 0 0 0 2px var(--row-color, var(--accent)); }
+.event-row.is-unconfirmed { border-left-style: dashed; }
+
+.event-when { font-variant-numeric: tabular-nums; color: var(--text-dim); font-size: clamp(0.85rem, 1.5vw, 1.1rem); white-space: nowrap; }
+.event-title { font-size: clamp(1rem, 1.9vw, 1.45rem); font-weight: 450; line-height: 1.25; }
+.event-meta { color: var(--text-dim); font-size: clamp(0.8rem, 1.3vw, 1rem); margin-top: 0.2rem; }
+.event-flag { color: #f2b44b; font-size: 0.8rem; margin-top: 0.25rem; }
+
+.day-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin: 1.2rem 0 0.6rem;
+  color: var(--text-dim);
+  font-size: clamp(0.85rem, 1.5vw, 1.1rem);
+}
+.day-heading:first-child { margin-top: 0; }
+.day-heading strong { color: var(--text); font-weight: 500; }
+
+.empty-note { color: var(--text-dim); padding: 1.5rem 0.5rem; text-align: center; }
+
+/* --- week view ---------------------------------------------------------- */
+
+.week {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  height: 100%;
+  min-height: 0;
+  gap: 0.5rem;
+}
+.week-head, .week-allday, .week-body { display: grid; grid-template-columns: 3.5rem repeat(7, 1fr); gap: 0.35rem; }
+
+.week-daylabel { text-align: center; padding: 0.35rem 0; border-radius: 10px; }
+.week-daylabel .dow { color: var(--text-dim); font-size: clamp(0.7rem, 1.2vw, 0.9rem); text-transform: uppercase; letter-spacing: 0.1em; }
+.week-daylabel .dnum { font-size: clamp(1.1rem, 2.2vw, 1.7rem); font-weight: 300; }
+.week-daylabel.is-today { background: var(--surface-2); }
+.week-daylabel.is-today .dnum { color: var(--accent); font-weight: 500; }
+
+.week-allday .allday-cell { display: flex; flex-direction: column; gap: 0.2rem; }
+.allday-chip {
+  background: var(--surface-2);
+  border-left: 4px solid var(--row-color, var(--text-dim));
+  border-radius: 6px;
+  padding: 0.25rem 0.4rem;
+  font-size: clamp(0.7rem, 1.15vw, 0.95rem);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* grid-auto-rows: 1fr makes the single row fill the panel, which is what gives
+   the absolutely-positioned event blocks something to be a percentage of.
+   The padding keeps the topmost hour tick from being clipped in half. */
+.week-body {
+  grid-auto-rows: 1fr;
+  padding: 0.6rem 0;
+  overflow: hidden;
+  min-height: 0;
+  position: relative;
+}
+
+.hour-col { position: relative; }
+.hour-tick {
+  position: absolute;
+  right: 0.4rem;
+  transform: translateY(-50%);
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+.day-col { position: relative; background: var(--surface); border-radius: 10px; }
+.day-col.is-today { background: var(--surface-2); }
+.hour-line { position: absolute; left: 0; right: 0; border-top: 1px solid var(--line); }
+
+.week-event {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  border-radius: 8px;
+  padding: 0.25rem 0.4rem;
+  background: color-mix(in srgb, var(--row-color) 26%, var(--surface-2));
+  border-left: 4px solid var(--row-color, var(--accent));
+  overflow: hidden;
+  font-size: clamp(0.68rem, 1.1vw, 0.92rem);
+  line-height: 1.2;
+}
+.week-event .we-title { font-weight: 500; }
+.week-event .we-time { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+.now-line { position: absolute; left: 0; right: 0; height: 2px; background: var(--danger); z-index: 3; }
+.now-line::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+/* --- month view --------------------------------------------------------- */
+
+.month { display: grid; grid-template-rows: auto 1fr; height: 100%; min-height: 0; gap: 0.4rem; }
+.month-dow, .month-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.4rem; }
+.month-grid { grid-auto-rows: 1fr; min-height: 0; }
+.month-dow div { text-align: center; color: var(--text-dim); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em; }
+
+.month-cell {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 0.35rem 0.4rem;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-height: 0;
+}
+.month-cell.is-outside { opacity: 0.38; }
+.month-cell.is-today { background: var(--surface-2); box-shadow: inset 0 0 0 2px var(--accent); }
+.month-daynum { font-size: clamp(0.8rem, 1.5vw, 1.1rem); color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.month-cell.is-today .month-daynum { color: var(--accent); font-weight: 600; }
+.month-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: clamp(0.62rem, 1vw, 0.85rem);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.month-chip .dot { flex: none; }
+.month-more { color: var(--text-dim); font-size: 0.7rem; }
+
+/* --- sheet -------------------------------------------------------------- */
+
+.scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); z-index: 20; }
+
+.sheet {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: min(680px, 96vw);
+  max-height: 92vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border-radius: var(--radius) var(--radius) 0 0;
+  padding: clamp(1rem, 3vw, 2rem);
+  z-index: 21;
+  box-shadow: 0 -20px 60px rgba(0, 0, 0, 0.6);
+  animation: sheet-in 220ms ease;
+}
+@keyframes sheet-in { from { transform: translate(-50%, 24px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
+
+.sheet h2 { margin: 0 0 0.35rem; font-size: clamp(1.3rem, 3vw, 1.9rem); font-weight: 450; }
+.sheet .sub { color: var(--text-dim); margin: 0 0 1.2rem; }
+
+.field { margin-bottom: 0.9rem; }
+.field label { display: block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem; }
+.field input, .field textarea, .field select {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0.7rem 0.9rem;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-size: 1.05rem;
+}
+.field textarea { min-height: 5rem; resize: none; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
+
+.sheet-actions { display: flex; gap: 0.6rem; margin-top: 1.2rem; }
+.btn {
+  flex: 1;
+  min-height: var(--tap);
+  border: 0;
+  border-radius: 14px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 1.05rem;
+}
+.btn.primary { background: var(--accent); color: #05070c; font-weight: 600; }
+.btn.danger { background: transparent; color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger); }
+.btn:active { transform: scale(0.98); }
+
+.detail-line { display: flex; gap: 0.7rem; padding: 0.55rem 0; border-top: 1px solid var(--line); }
+.detail-line dt { color: var(--text-dim); min-width: 6rem; }
+.detail-line dd { margin: 0; }
+.form-error { color: var(--danger); margin-top: 0.6rem; min-height: 1.2em; }
