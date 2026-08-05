@@ -60,6 +60,18 @@ if [[ ! -f "$DIR/config.yaml" ]]; then
   cp "$DIR/config.example.yaml" "$DIR/config.yaml"
   chown "$RUN_USER" "$DIR/config.yaml"
 fi
+
+# A device with no keyboard shouldn't ship with remote access wide open, and
+# nobody types a 32-character random string on a touch screen -- so generate one
+# on first install and print it at the end.
+GENERATED_TOKEN=""
+if grep -qE '^[[:space:]]*token:[[:space:]]*""[[:space:]]*$' "$DIR/config.yaml"; then
+  GENERATED_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
+  # Only the token line inside the remote block, which is the only empty one.
+  sed -i "0,/^\([[:space:]]*\)token:[[:space:]]*\"\"[[:space:]]*$/s//\1token: \"$GENERATED_TOKEN\"/" \
+    "$DIR/config.yaml"
+  say "Generated a remote access code"
+fi
 sudo -u "$RUN_USER" mkdir -p "$DIR/photos" "$DIR/data"
 
 HOST=$(sed -n 's/^[[:space:]]*host:[[:space:]]*\(.*\)/\1/p' "$DIR/config.yaml" | head -1)
@@ -93,9 +105,18 @@ fi
 say "Done"
 cat <<EOF
 
-  Server:  http://$(hostname -I 2>/dev/null | awk '{print $1}'):$PORT
+  Display: http://$(hostname -I 2>/dev/null | awk '{print $1}'):$PORT
+  Remote:  http://$(hostname -I 2>/dev/null | awk '{print $1}'):$PORT/remote
   Config:  $DIR/config.yaml    (calendar feed URLs go here)
-  Photos:  $DIR/photos/        (drop images in, no restart needed)
+  Photos:  $DIR/photos/        (or send them from the remote page)
+$( [[ -n "$GENERATED_TOKEN" ]] && cat <<TOKENBLOCK
+
+  Remote access code (write this down -- it is in config.yaml too):
+
+      $GENERATED_TOKEN
+
+TOKENBLOCK
+)
 
   Logs:    journalctl -u walldisplay -f
 $( [[ $WITH_KIOSK -eq 1 ]] && echo "  Kiosk:   journalctl -u walldisplay-kiosk -f" )

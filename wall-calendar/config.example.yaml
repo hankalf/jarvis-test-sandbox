@@ -42,6 +42,43 @@ display:
     start: "23:00"
     end: "06:30"
 
+# How the panel reads for the person standing in front of it. The defaults are
+# tuned for an older viewer at a few feet: light theme, large type, plain words.
+accessibility:
+  # "light" or "dark". Light is the default on purpose -- thin light-on-dark
+  # text haloes badly for aging eyes, especially after cataract surgery.
+  theme: light
+  # Multiplies every type size. 1.0 is already large; try 1.25 or 1.5 if they
+  # squint, 0.85 if the panel is close to a chair.
+  text_scale: 1.0
+  # true  -> the big "what's next" screen (recommended)
+  # false -> the denser two-column agenda
+  simple_view: true
+  # false hides the Week and Month buttons entirely, leaving one screen with
+  # nothing to navigate and no way to get lost.
+  show_week_month: true
+  # Stops the slow photo pan and the crossfades. Worth trying if movement on
+  # the wall is distracting or causes dizziness.
+  reduce_motion: false
+  # The day of the week in large type -- often the single most useful thing on
+  # the panel for someone whose days run together.
+  show_weekday_banner: true
+
+# Checking on the display and adding photos from a phone.
+remote:
+  enabled: true
+  # REQUIRED for any access from another device. Use a long random string:
+  #   python3 -c "import secrets; print(secrets.token_urlsafe(24))"
+  # Empty means the remote page is refused from anywhere but the device itself.
+  # The panel's own browser always works -- it connects over loopback.
+  token: ""
+  device_name: "Mom's Wall Calendar"
+  max_upload_mb: 40
+  # Uploads are downscaled to this on the long edge and saved as JPEG. A phone
+  # photo is ~4000px; a wall panel is 1080-1440px, so this saves a lot of work
+  # on every slideshow tick.
+  resize_long_edge: 2560
+
 presence:
   # none   - always show the calendar, no presence handling at all
   # http   - something else POSTs /api/presence (Home Assistant, a sensor script)

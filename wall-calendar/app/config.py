@@ -30,12 +30,28 @@ DEFAULTS: dict[str, Any] = {
         "gpio": {"pin": 17},
         "serial": {"port": "/dev/ttyUSB0", "baud": 256000},
     },
+    "accessibility": {
+        "theme": "light",
+        "text_scale": 1.0,
+        "simple_view": True,
+        "show_week_month": True,
+        "reduce_motion": False,
+        "show_weekday_banner": True,
+    },
+    "remote": {
+        "enabled": True,
+        "token": "",
+        "device_name": "Wall Calendar",
+        "max_upload_mb": 40,
+        "resize_long_edge": 2560,
+    },
     "data_dir": "data",
 }
 
 # Fallback palette for feeds that don't name a colour, so two calendars never
-# come out the same shade by accident.
-PALETTE = ["#5b9cf8", "#f2884b", "#5fc9a0", "#c98bdb", "#e5c454", "#e8697d"]
+# come out the same shade by accident. Chosen to stay legible as text and as
+# fills on both the light and dark themes.
+PALETTE = ["#1d5fbf", "#b8541a", "#1f7a5a", "#7a3fa0", "#8a6d13", "#b02a45"]
 
 
 def _deep_merge(base: dict, override: dict | None) -> dict:
@@ -103,8 +119,22 @@ class Config:
         return feeds
 
     @property
+    def accessibility(self) -> dict:
+        return self._data["accessibility"]
+
+    @property
+    def remote(self) -> dict:
+        return self._data["remote"]
+
+    @property
     def photo_dir(self) -> Path:
         return self._resolve(self.display["photo_dir"])
+
+    @property
+    def feed_cache_dir(self) -> Path:
+        """Last-good copy of each feed, so a reboot without working internet
+        still comes up showing the calendar instead of an empty screen."""
+        return self.data_dir / "feed-cache"
 
     @property
     def data_dir(self) -> Path:
@@ -117,6 +147,7 @@ class Config:
     def client_settings(self) -> dict:
         """The slice of config the browser needs to render itself."""
         d = self.display
+        a = self.accessibility
         return {
             "timezone": self._data["timezone"],
             "clock24h": bool(d["clock_24h"]),
@@ -124,4 +155,11 @@ class Config:
             "agendaDays": int(d["agenda_days"]),
             "photoIntervalSeconds": int(d["photo_interval_seconds"]),
             "calendars": [{"name": c["name"], "color": c["color"]} for c in self.calendars],
+            "theme": str(a["theme"]).lower(),
+            "textScale": max(0.6, min(2.5, float(a["text_scale"]))),
+            "simpleView": bool(a["simple_view"]),
+            "showWeekMonth": bool(a["show_week_month"]),
+            "reduceMotion": bool(a["reduce_motion"]),
+            "showWeekdayBanner": bool(a["show_weekday_banner"]),
+            "deviceName": self.remote["device_name"],
         }

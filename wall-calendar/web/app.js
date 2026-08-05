@@ -88,6 +88,30 @@ function fmtDayLong(c) {
   }).format(new Date(civilToUTC(c)));
 }
 
+function fmtWeekday(c) {
+  return new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "long" })
+    .format(new Date(civilToUTC(c)));
+}
+
+function fmtDateNoWeekday(c) {
+  return new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "long", day: "numeric" })
+    .format(new Date(civilToUTC(c)));
+}
+
+/** "in 25 minutes" / "in about 3 hours" — plainer than a bare clock time for
+ *  someone checking whether they have time to sit down. */
+function humanUntil(date) {
+  const minutes = Math.round((date - new Date()) / 60000);
+  if (minutes < 0) return "";
+  if (minutes < 1) return "right now";
+  if (minutes === 1) return "in 1 minute";
+  if (minutes < 60) return `in ${minutes} minutes`;
+  const hours = Math.round(minutes / 60);
+  if (hours === 1) return "in about an hour";
+  if (hours < 12) return `in about ${hours} hours`;
+  return "";
+}
+
 function fmtDayShort(c) {
   return new Intl.DateTimeFormat("en-US", {
     timeZone: "UTC",
@@ -160,9 +184,28 @@ function nextUpcoming() {
 
 // ---------------------------------------------------------------- networking
 
+/* A token is only needed when the kiosk browser and the server are on different
+ * machines (the Docker split). On-device the server trusts loopback, so this
+ * stays empty and nothing changes. */
+const TOKEN_KEY = "walldisplay-token";
+
+function readToken() {
+  const fromUrl = new URLSearchParams(location.search).get("token");
+  if (fromUrl) {
+    localStorage.setItem(TOKEN_KEY, fromUrl);
+    history.replaceState(null, "", location.pathname);
+    return fromUrl;
+  }
+  return localStorage.getItem(TOKEN_KEY) || "";
+}
+
+const TOKEN = readToken();
+
 async function api(path, options) {
+  const headers = { "Content-Type": "application/json" };
+  if (TOKEN) headers["X-Wall-Token"] = TOKEN;
   const resp = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
+    headers,
     ...options,
   });
   if (!resp.ok) {
@@ -177,7 +220,24 @@ async function loadSettings() {
   TZ = state.settings.timezone || "UTC";
   refreshFormatters();
   state.anchor = today();
+  applyAppearance();
   renderLegend();
+}
+
+/** Theme, type size, and motion all come from config.yaml so the panel can be
+ *  tuned for whoever is reading it without touching CSS. */
+function applyAppearance() {
+  const s = state.settings;
+  document.documentElement.dataset.theme = s.theme === "dark" ? "dark" : "light";
+  document.documentElement.style.setProperty("--scale", String(s.textScale || 1));
+  document.body.classList.toggle("reduce-motion", !!s.reduceMotion);
+
+  // With week and month hidden there is nothing to navigate, so the whole
+  // control cluster goes too -- one screen, no way to get lost on it.
+  const showNav = s.showWeekMonth !== false;
+  el("views").hidden = !showNav;
+  for (const id of ["btn-prev", "btn-next", "btn-today"]) el(id).hidden = !showNav;
+  if (!showNav) state.view = "today";
 }
 
 /** Fetch a window wide enough to cover what the current view can reach. */
@@ -235,6 +295,8 @@ function connect() {
     } else if (message.type === "events-changed") {
       await loadEvents(true);
       render();
+    } else if (message.type === "photos-changed") {
+      await loadPhotos();
     }
   });
 
@@ -324,8 +386,9 @@ function driftOverlay() {
 
 function renderPhotoOverlay() {
   const now = new Date();
+  el("photo-weekday").textContent = fmtWeekday(today());
   el("photo-time").textContent = fmtTime(now);
-  el("photo-date").textContent = fmtDayLong(today());
+  el("photo-date").textContent = fmtDateNoWeekday(today());
   const next = nextUpcoming();
   el("photo-next").textContent = next
     ? `Next: ${next.title} — ${next.allDay ? fmtDayShort(civil(zparts(new Date(next.start)))) : fmtTime(new Date(next.start)) + " " + (daysBetween(today(), civil(zparts(new Date(next.start)))) === 0 ? "today" : fmtDayShort(civil(zparts(new Date(next.start)))))}`
@@ -340,15 +403,24 @@ function render() {
   renderRangeLabel();
   const root = el("view-root");
   root.innerHTML = "";
-  if (state.view === "today") root.appendChild(renderTodayView());
+  if (state.view === "today") {
+    root.appendChild(state.settings.simpleView ? renderSimpleView() : renderTodayView());
+  }
   else if (state.view === "week") root.appendChild(renderWeekView());
   else root.appendChild(renderMonthView());
 }
 
 function renderClock() {
   const now = new Date();
+  const c = today();
   el("clock").textContent = fmtTime(now);
-  el("today-date").textContent = fmtDayLong(today());
+  // "What day is it?" is the question a wall calendar most often answers, so
+  // the weekday gets equal billing with the time rather than hiding in a
+  // subtitle. Suppressed only if the config turns it off.
+  const banner = state.settings?.showWeekdayBanner !== false;
+  el("weekday").textContent = banner ? fmtWeekday(c) : "";
+  el("weekday").hidden = !banner;
+  el("today-date").textContent = banner ? fmtDateNoWeekday(c) : fmtDayLong(c);
 }
 
 function renderRangeLabel() {
@@ -421,6 +493,148 @@ function eventRow(ev, { showDay = false } = {}) {
     const flag = document.createElement("div");
     flag.className = "event-flag";
     flag.textContent = "Needs confirming — tap to review";
+    body.appendChild(flag);
+  }
+
+  row.append(when, body);
+  row.addEventListener("click", () => openDetail(ev));
+  return row;
+}
+
+/** Big-type view: what's happening now or next, then the rest of today and
+ *  tomorrow. No scrolling, no density — the whole point is that it reads from
+ *  the other side of the room without anyone having to touch it. */
+function renderSimpleView() {
+  const wrap = document.createElement("div");
+  wrap.className = "simple";
+  const byDay = eventsByDay();
+  const now = new Date();
+
+  const todays = byDay.get(civilKey(today())) || [];
+  const tomorrow = addDays(today(), 1);
+  const tomorrows = byDay.get(civilKey(tomorrow)) || [];
+
+  const remaining = todays.filter((e) => new Date(e.end) > now);
+  const running = remaining.find(isNow);
+  // Something happening right now outranks something later today.
+  const hero = running || remaining[0] || tomorrows[0] || null;
+  const heroIsTomorrow = hero !== null && !remaining.includes(hero);
+
+  wrap.appendChild(buildHero(hero, running === hero, heroIsTomorrow));
+
+  const laterToday = remaining.filter((e) => e !== hero);
+  if (laterToday.length) {
+    wrap.appendChild(buildSection("Later today", laterToday, 3));
+  }
+  const laterTomorrow = tomorrows.filter((e) => e !== hero);
+  if (laterTomorrow.length) {
+    wrap.appendChild(buildSection(`Tomorrow — ${fmtWeekday(tomorrow)}`, laterTomorrow, 3));
+  }
+  return wrap;
+}
+
+function buildHero(ev, isRunning, isTomorrow) {
+  const hero = document.createElement("button");
+  hero.className = "hero";
+
+  const label = document.createElement("div");
+  label.className = "hero-label";
+
+  if (ev === null) {
+    hero.classList.add("is-empty");
+    hero.disabled = true;
+    label.textContent = "Today";
+    const nothing = document.createElement("div");
+    nothing.className = "hero-title";
+    nothing.textContent = "Nothing planned today.";
+    hero.append(label, nothing);
+    return hero;
+  }
+
+  label.textContent = isRunning ? "Happening now" : isTomorrow ? "Tomorrow" : "Next";
+
+  const when = document.createElement("div");
+  when.className = "hero-when";
+  when.textContent = ev.allDay
+    ? (isTomorrow ? "All day tomorrow" : "All day")
+    : (isTomorrow ? `${fmtWeekday(addDays(today(), 1))}, ${fmtTime(new Date(ev.start))}` : fmtTime(new Date(ev.start)));
+
+  const title = document.createElement("div");
+  title.className = "hero-title";
+  title.textContent = ev.title;
+  hero.append(label, when, title);
+
+  if (ev.location) {
+    const where = document.createElement("div");
+    where.className = "hero-where";
+    where.textContent = ev.location;
+    hero.appendChild(where);
+  }
+
+  const countdown = isRunning ? "Started " + fmtTime(new Date(ev.start))
+    : isTomorrow ? "" : humanUntil(new Date(ev.start));
+  if (countdown) {
+    const note = document.createElement("div");
+    note.className = "hero-countdown";
+    note.textContent = countdown;
+    hero.appendChild(note);
+  }
+  if (!ev.confirmed) {
+    const flag = document.createElement("div");
+    flag.className = "big-flag";
+    flag.textContent = "Needs confirming — tap to review";
+    hero.appendChild(flag);
+  }
+
+  hero.style.setProperty("--row-color", ev.color);
+  hero.addEventListener("click", () => openDetail(ev));
+  return hero;
+}
+
+function buildSection(labelText, events, limit) {
+  const section = document.createElement("section");
+  section.className = "simple-section";
+  const label = document.createElement("h2");
+  label.className = "section-label";
+  label.textContent = labelText;
+  section.appendChild(label);
+
+  events.slice(0, limit).forEach((ev) => section.appendChild(bigRow(ev)));
+  if (events.length > limit) {
+    const more = document.createElement("div");
+    more.className = "simple-more";
+    more.textContent = `and ${events.length - limit} more`;
+    section.appendChild(more);
+  }
+  return section;
+}
+
+function bigRow(ev) {
+  const row = document.createElement("button");
+  row.className = "big-row";
+  row.style.setProperty("--row-color", ev.color);
+  if (isPast(ev)) row.classList.add("is-past");
+  if (!ev.confirmed) row.classList.add("is-unconfirmed");
+
+  const when = document.createElement("div");
+  when.className = "big-when";
+  when.textContent = ev.allDay ? "All day" : fmtTime(new Date(ev.start));
+
+  const body = document.createElement("div");
+  const title = document.createElement("div");
+  title.className = "big-title";
+  title.textContent = ev.title;
+  body.appendChild(title);
+  if (ev.location) {
+    const where = document.createElement("div");
+    where.className = "big-where";
+    where.textContent = ev.location;
+    body.appendChild(where);
+  }
+  if (!ev.confirmed) {
+    const flag = document.createElement("div");
+    flag.className = "big-flag";
+    flag.textContent = "Needs confirming";
     body.appendChild(flag);
   }
 
@@ -949,6 +1163,18 @@ async function init() {
   wireEvents();
   syncViewButtons();
   await Promise.all([loadEvents(true), loadPhotos()]);
+
+  // Ask for the mode over plain HTTP rather than waiting for the WebSocket to
+  // tell us. If the socket can't connect -- a proxy in the way, a flaky first
+  // moments of boot -- neither layer would ever be shown and the wall would
+  // just sit there black.
+  try {
+    applyMode((await api("/api/state")).mode);
+  } catch (err) {
+    console.warn("could not read display mode, defaulting to calendar", err);
+    applyMode("calendar");
+  }
+
   render();
   renderPhotoOverlay();
   showNextPhoto();
@@ -961,6 +1187,15 @@ async function init() {
 
   // Re-render so "now" markers and past-event dimming stay honest.
   setInterval(() => { if (state.mode === "calendar") render(); }, 60000);
+
+  // Fallback path for a wedged WebSocket: keep the mode roughly right over
+  // plain HTTP so presence still switches the wall, just less instantly.
+  setInterval(async () => {
+    if (socket && socket.readyState === WebSocket.OPEN) return;
+    try {
+      applyMode((await api("/api/state")).mode);
+    } catch { /* offline; keep showing what we have */ }
+  }, 10000);
 
   setInterval(showNextPhoto, (state.settings.photoIntervalSeconds || 45) * 1000);
   setInterval(driftOverlay, 120000);

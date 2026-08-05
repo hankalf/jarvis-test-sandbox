@@ -6,6 +6,13 @@ recurring-ical-events>=2.1
 pydantic>=2.5
 PyYAML>=6.0
 tzdata>=2024.1
+python-multipart>=0.0.9
+
+# Photo normalising on upload: EXIF rotation, downscaling, and HEIC from
+# iPhones. Without these the server still runs, but only accepts formats the
+# browser can already display and stores them at full size.
+Pillow>=10.2
+pillow-heif>=0.16
 
 # Only needed for the matching presence backend; harmless to install anyway.
 # pyserial>=3.5      # presence.backend: serial  (LD2410 mmWave over USB)

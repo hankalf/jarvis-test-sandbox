@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Wall Calendar — Remote</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%2317509e'/></svg>">
+<link rel="stylesheet" href="/remote.css">
+</head>
+<body>
+
+<!-- Shown until a working token is stored. -->
+<section class="gate" id="gate" hidden>
+  <div class="gate-card">
+    <h1>Wall Calendar</h1>
+    <p class="muted">Enter the access code from the display's <code>config.yaml</code>
+      (<code>remote.token</code>).</p>
+    <form id="gate-form">
+      <input id="gate-token" type="password" autocomplete="current-password"
+             placeholder="Access code" required>
+      <button type="submit" class="btn primary">Connect</button>
+    </form>
+    <p class="error" id="gate-error"></p>
+  </div>
+</section>
+
+<main id="app" hidden>
+  <header class="bar">
+    <div>
+      <h1 id="device-name">Wall Calendar</h1>
+      <div class="muted" id="device-sub">connecting…</div>
+    </div>
+    <button class="btn ghost" id="btn-signout" title="Forget access code">Sign out</button>
+  </header>
+
+  <div class="warnings" id="warnings"></div>
+
+  <!-- Status -->
+  <section class="card">
+    <h2>Status</h2>
+    <div class="stats" id="stats"></div>
+    <div class="row-actions">
+      <button class="btn" id="btn-show-calendar">Show calendar now</button>
+      <button class="btn" id="btn-show-photos">Show photos</button>
+    </div>
+  </section>
+
+  <!-- What's coming up -->
+  <section class="card">
+    <h2>Coming up</h2>
+    <ul class="upcoming" id="upcoming"><li class="muted">Loading…</li></ul>
+    <button class="btn primary" id="btn-add">Add an appointment</button>
+  </section>
+
+  <!-- Photos -->
+  <section class="card">
+    <h2>Photos <span class="muted" id="photo-count"></span></h2>
+    <label class="dropzone" id="dropzone">
+      <input type="file" id="file-input" accept="image/*,.heic,.heif" multiple hidden>
+      <strong>Add photos</strong>
+      <span class="muted">Tap to choose, or drag files here. iPhone HEIC is fine —
+        they're converted and resized automatically.</span>
+    </label>
+    <div class="upload-status" id="upload-status"></div>
+    <div class="photo-grid" id="photo-grid"></div>
+  </section>
+</main>
+
+<!-- Add-appointment dialog -->
+<div class="scrim" id="scrim" hidden></div>
+<div class="sheet" id="sheet" hidden role="dialog" aria-modal="true">
+  <h2>New appointment</h2>
+  <form id="event-form">
+    <label for="e-title">What</label>
+    <input id="e-title" name="title" required maxlength="200" placeholder="Dr. Patel — follow-up">
+    <div class="two">
+      <div>
+        <label for="e-date">Date</label>
+        <input id="e-date" name="date" type="date" required>
+      </div>
+      <div>
+        <label for="e-time">Time</label>
+        <input id="e-time" name="time" type="time" value="09:00">
+      </div>
+    </div>
+    <div class="two">
+      <div>
+        <label for="e-duration">Length</label>
+        <select id="e-duration" name="duration">
+          <option value="30">30 minutes</option>
+          <option value="60" selected>1 hour</option>
+          <option value="90">1.5 hours</option>
+          <option value="120">2 hours</option>
+          <option value="1440">All day</option>
+        </select>
+      </div>
+      <div>
+        <label for="e-cal">Label</label>
+        <input id="e-cal" name="calendar" maxlength="80" value="Added remotely">
+      </div>
+    </div>
+    <label for="e-loc">Where (optional)</label>
+    <input id="e-loc" name="location" maxlength="300">
+    <p class="error" id="event-error"></p>
+    <div class="row-actions">
+      <button type="button" class="btn" id="e-cancel">Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</div>
+
+<script src="/remote.js"></script>
+</body>
+</html>

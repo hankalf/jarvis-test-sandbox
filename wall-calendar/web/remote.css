@@ -1,0 +1,213 @@
+/* Caregiver page. Unlike the kiosk this is an ordinary responsive web page —
+   used on a phone, one-handed, usually to answer "is it still working?" and
+   "here are some photos from the weekend". */
+
+:root {
+  --bg: #f5f4f0;
+  --surface: #ffffff;
+  --line: #d9d5cc;
+  --text: #17191d;
+  --dim: #5a606a;
+  --accent: #17509e;
+  --accent-ink: #fff;
+  --ok: #1c6b46;
+  --warn-bg: #fdf1d4;
+  --warn-ink: #6b4a00;
+  --danger: #a8202f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b;
+    --surface: #1b202a;
+    --line: #333b49;
+    --text: #eef2f8;
+    --dim: #a9b3c2;
+    --accent: #7db4ff;
+    --accent-ink: #06090f;
+    --ok: #59d39b;
+    --warn-bg: #3a2f16;
+    --warn-ink: #ffd482;
+    --danger: #ff8a9b;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding-bottom: 3rem;
+}
+
+h1 { font-size: 1.25rem; margin: 0; }
+h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+.muted { color: var(--dim); font-size: 0.9rem; }
+code { background: rgba(127, 127, 127, 0.18); padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.9em; }
+.error { color: var(--danger); min-height: 1.2em; margin: 0.5rem 0 0; font-size: 0.9rem; }
+
+main { max-width: 720px; margin: 0 auto; padding: 0 1rem; }
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+/* --- gate --------------------------------------------------------------- */
+
+/* Any rule that sets `display` has to restore [hidden] itself, or the element
+   stays on screen when JavaScript hides it. */
+.gate { display: grid; place-items: center; min-height: 100vh; padding: 1rem; }
+.gate[hidden], .sheet[hidden], .scrim[hidden] { display: none; }
+.gate-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1.5rem;
+  width: min(26rem, 100%);
+}
+.gate-card form { display: grid; gap: 0.75rem; margin-top: 1rem; }
+
+/* --- controls ----------------------------------------------------------- */
+
+input, select, button { font: inherit; }
+
+input, select {
+  width: 100%;
+  min-height: 48px;
+  padding: 0.55rem 0.75rem;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+label { display: block; font-size: 0.85rem; color: var(--dim); margin: 0.75rem 0 0.25rem; font-weight: 600; }
+
+.btn {
+  min-height: 48px;
+  padding: 0 1rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); width: 100%; }
+.btn.ghost { background: transparent; }
+.btn:disabled { opacity: 0.55; cursor: default; }
+
+.row-actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+.row-actions .btn { flex: 1; }
+
+/* --- status ------------------------------------------------------------- */
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.75rem; }
+.stat { background: var(--bg); border-radius: 10px; padding: 0.6rem 0.7rem; }
+.stat dt { font-size: 0.75rem; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; margin: 0; }
+.stat dd { margin: 0.15rem 0 0; font-size: 1.05rem; font-weight: 600; }
+.stat dd.ok { color: var(--ok); }
+.stat dd.bad { color: var(--danger); }
+
+.warnings { max-width: 720px; margin: 0 auto; padding: 0 1rem; }
+.warning {
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+  border-radius: 10px;
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.upcoming { list-style: none; margin: 0 0 0.75rem; padding: 0; }
+.upcoming li {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.55rem 0;
+  border-top: 1px solid var(--line);
+  align-items: baseline;
+}
+.upcoming li:first-child { border-top: 0; }
+.upcoming .when { color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 0.9rem; min-width: 8.5rem; }
+.upcoming .what { font-weight: 500; }
+.upcoming .pending { color: var(--warn-ink); background: var(--warn-bg); border-radius: 5px; padding: 0 0.35rem; font-size: 0.75rem; font-weight: 700; }
+
+/* --- photos ------------------------------------------------------------- */
+
+.dropzone {
+  display: grid;
+  gap: 0.3rem;
+  place-items: center;
+  text-align: center;
+  padding: 1.5rem 1rem;
+  border: 2px dashed var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+  margin: 0;
+}
+.dropzone.is-over { border-color: var(--accent); background: var(--bg); }
+.dropzone strong { font-size: 1.05rem; }
+
+.upload-status { margin-top: 0.6rem; font-size: 0.9rem; }
+.upload-status .bad { color: var(--danger); }
+.upload-status .good { color: var(--ok); }
+
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+.thumb { position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: var(--bg); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb button {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 0;
+  background: rgba(0, 0, 0, 0.66);
+  color: #fff;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* --- sheet -------------------------------------------------------------- */
+
+.scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 20; }
+.sheet {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: min(30rem, 100%);
+  max-height: 92vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border-radius: 14px 14px 0 0;
+  padding: 1.25rem;
+  z-index: 21;
+}
+.sheet h2 { margin-bottom: 0.25rem; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }

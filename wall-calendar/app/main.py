@@ -5,15 +5,29 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Body,
+    Depends,
+    FastAPI,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import photos as photo_lib
+from .auth import TokenGuard, token_warnings
 from .calendars import CalendarFeeds
 from .config import Config
 from .presence import PresenceManager
@@ -33,12 +47,16 @@ CONFIG_PATH = Path(
     os.environ.get("WALLDISPLAY_CONFIG", PROJECT_DIR / "config.yaml")
 ).expanduser()
 
-PHOTO_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"}
-
 # Loaded at import rather than in lifespan so the static mounts below can be
 # registered in the right order -- the catch-all "/" mount must come last.
 CONFIG = Config.load(CONFIG_PATH)
 CONFIG.photo_dir.mkdir(parents=True, exist_ok=True)
+
+# `write` covers anything that changes what the panel shows; `remote` covers
+# the caregiver surface, which stays shut when remote access is switched off.
+require_write = TokenGuard(CONFIG)
+require_remote = TokenGuard(CONFIG, remote_only=True)
+STARTED_AT = datetime.now(timezone.utc)
 
 
 class NewEvent(BaseModel):
@@ -68,7 +86,9 @@ async def lifespan(app: FastAPI):
 
     tz = config.timezone
     store = Store(config.db_path)
-    feeds = CalendarFeeds(config.calendars, tz)
+    feeds = CalendarFeeds(config.calendars, tz, cache_dir=config.feed_cache_dir)
+    # Show last-known-good immediately; the first live refresh replaces it.
+    await asyncio.to_thread(feeds.load_cache)
     presence = PresenceManager(config.presence)
     controller = DisplayController(config.display, presence, tz)
 
@@ -156,18 +176,15 @@ async def get_events(
     start = midnight - timedelta(days=back)
     end = midnight + timedelta(days=days)
 
-    events = app.state.feeds.events_between(start, end)
-    events.extend(app.state.store.events_between(start, end))
-    events.sort(key=lambda e: (e["start"], e["title"]))
     return {
         "start": start.isoformat(),
         "end": end.isoformat(),
-        "events": events,
+        "events": _merged_events(start, end),
         "feeds": app.state.feeds.status,
     }
 
 
-@app.post("/api/events", status_code=201)
+@app.post("/api/events", status_code=201, dependencies=[Depends(require_write)])
 async def create_event(payload: NewEvent):
     config: Config = app.state.config
     tz = config.timezone
@@ -201,7 +218,7 @@ async def create_event(payload: NewEvent):
     return event
 
 
-@app.delete("/api/events/{event_id}")
+@app.delete("/api/events/{event_id}", dependencies=[Depends(require_write)])
 async def delete_event(event_id: str):
     if not app.state.store.delete_event(event_id):
         raise HTTPException(status_code=404, detail="no such local event")
@@ -209,7 +226,7 @@ async def delete_event(event_id: str):
     return {"status": "deleted"}
 
 
-@app.post("/api/events/{event_id}/confirm")
+@app.post("/api/events/{event_id}/confirm", dependencies=[Depends(require_write)])
 async def confirm_event(event_id: str):
     if not app.state.store.confirm_event(event_id):
         raise HTTPException(status_code=404, detail="no such local event")
@@ -219,21 +236,112 @@ async def confirm_event(event_id: str):
 
 @app.get("/api/photos")
 async def list_photos():
-    photo_dir: Path = app.state.config.photo_dir
-    names = sorted(
-        p.name
-        for p in photo_dir.iterdir()
-        if p.is_file() and p.suffix.lower() in PHOTO_SUFFIXES
-    )
-    return {"photos": [f"/photos/{name}" for name in names]}
+    entries = photo_lib.list_photos(app.state.config.photo_dir)
+    return {
+        "photos": [entry["url"] for entry in entries],  # what the kiosk consumes
+        "items": entries,  # what the caregiver page consumes
+    }
+
+
+@app.post("/api/photos", dependencies=[Depends(require_remote)])
+async def upload_photos(files: list[UploadFile] = File(...)):
+    """Accepts a batch, and reports per-file rather than failing the lot: a
+    relative sending twenty holiday photos shouldn't lose nineteen of them
+    because one was a screenshot of a PDF."""
+    config: Config = app.state.config
+    limit_bytes = int(config.remote["max_upload_mb"]) * 1024 * 1024
+    resize = int(config.remote["resize_long_edge"])
+
+    added, rejected = [], []
+    for upload in files:
+        data = await upload.read()
+        if len(data) > limit_bytes:
+            rejected.append(
+                {
+                    "name": upload.filename,
+                    "reason": f"larger than {config.remote['max_upload_mb']} MB",
+                }
+            )
+            continue
+        try:
+            result = await asyncio.to_thread(
+                photo_lib.save_upload,
+                config.photo_dir,
+                upload.filename or "photo",
+                data,
+                resize_long_edge=resize,
+            )
+        except ValueError as exc:
+            rejected.append({"name": upload.filename, "reason": str(exc)})
+            continue
+        added.append(result["name"])
+
+    if added:
+        app.state.controller.broadcast({"type": "photos-changed"})
+    log.info("photo upload: %d added, %d rejected", len(added), len(rejected))
+    return {"added": added, "rejected": rejected}
+
+
+@app.delete("/api/photos/{name}", dependencies=[Depends(require_remote)])
+async def delete_photo(name: str):
+    if not photo_lib.delete_photo(app.state.config.photo_dir, name):
+        raise HTTPException(status_code=404, detail="no such photo")
+    app.state.controller.broadcast({"type": "photos-changed"})
+    return {"status": "deleted"}
+
+
+@app.get("/api/status", dependencies=[Depends(require_remote)])
+async def status(request: Request):
+    """Everything the caregiver page needs to answer 'is it working?'."""
+    config: Config = app.state.config
+    photos = photo_lib.list_photos(config.photo_dir)
+    now = datetime.now(config.timezone)
+    upcoming = [
+        event
+        for event in _merged_events(now, now + timedelta(days=7))
+        if event["end"] > now.isoformat()
+    ][:8]
+
+    return {
+        "deviceName": config.remote["device_name"],
+        "startedAt": STARTED_AT.isoformat(),
+        "uptimeSeconds": int((datetime.now(timezone.utc) - STARTED_AT).total_seconds()),
+        "localTime": now.isoformat(),
+        "timezone": str(config.timezone),
+        "display": app.state.controller.snapshot(),
+        "feeds": app.state.feeds.status,
+        "photoCount": len(photos),
+        "photoBytes": sum(p["sizeBytes"] for p in photos),
+        "diskFreeBytes": _disk_free(config.photo_dir),
+        "upcoming": upcoming,
+        "warnings": token_warnings(config),
+    }
+
+
+def _disk_free(path: Path) -> int | None:
+    try:
+        return shutil.disk_usage(path).free
+    except OSError:
+        return None
+
+
+def _merged_events(start: datetime, end: datetime) -> list[dict]:
+    events = app.state.feeds.events_between(start, end)
+    events.extend(app.state.store.events_between(start, end))
+    events.sort(key=lambda e: (e["start"], e["title"]))
+    return events
 
 
 @app.get("/api/health")
 async def health():
+    """Unauthenticated on purpose: it reports liveness, never content."""
     return {
         "status": "ok",
-        "feeds": app.state.feeds.status,
-        "display": app.state.controller.snapshot(),
+        "feeds": [
+            {"name": f["name"], "ok": f["ok"], "cached": f.get("cached", False)}
+            for f in app.state.feeds.status
+        ],
+        "mode": app.state.controller.mode,
     }
 
 
@@ -270,6 +378,13 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/")
 async def index():
     return FileResponse(WEB_DIR / "index.html")
+
+
+@app.get("/remote")
+async def remote_page():
+    """The caregiver page. Served without a token -- it asks for one itself,
+    and every call it makes is guarded."""
+    return FileResponse(WEB_DIR / "remote.html")
 
 
 app.mount("/photos", StaticFiles(directory=CONFIG.photo_dir), name="photos")

@@ -1,17 +1,42 @@
 # Wall Calendar Display
 
-A touch-screen wall panel that shows your work schedule and appointments, and
+A touch-screen wall panel that shows appointments in large, plain type, and
 sits as a digital picture frame when nobody's near it. Walk up, it switches to
 the calendar. Walk away, it goes back to photos.
 
-Runs on a Raspberry Pi 5 or a small x86 mini PC. No cloud service, no account,
-no subscription — it reads your existing calendars over their standard iCal
-feeds and everything else stays on the box.
+Designed to be readable by an older person from across a room, and checkable by
+family from a phone. Family can see that it's working and send photos to it
+without touching the device.
+
+Everything runs **on the device** — a Raspberry Pi 5 or a small x86 mini PC.
+No cloud service, no account, no subscription. It reads your existing calendars
+over their standard iCal feeds and keeps a local copy, so it keeps working
+through an internet outage.
+
+## Designed for older eyes
+
+The defaults are not a typical dashboard, on purpose:
+
+- **Light theme.** Thin light-on-dark text haloes badly for aging eyes,
+  especially after cataract surgery. Dark is available if the room is dim.
+- **Large type everywhere**, scaled by one number in the config
+  (`text_scale: 1.5` makes the whole panel half again bigger). Nothing on the
+  panel is smaller than about 1rem, and secondary "dim" text still clears
+  WCAG AAA contrast rather than fading to grey.
+- **The day of the week in large type.** For someone whose days run together
+  this is often the single most useful thing on the wall.
+- **One thing at a time.** The default screen answers "what's next?" with a
+  single big card, then today and tomorrow underneath. Not a grid.
+- **A one-screen mode.** `show_week_month: false` removes the Week and Month
+  buttons entirely, leaving nothing to navigate and no way to get lost.
+- **Plain words** — "Happening now", "in about 2 hours", "Nothing planned
+  today" — instead of icons and abbreviations.
+- **Optional reduced motion**, if the slow photo pan is distracting.
 
 ## What it does
 
-- **Today view** — today's schedule beside an agenda of what's coming up. This is
-  what you see when you walk up to it.
+- **Today view** — a big "what's next" card, then the rest of today and
+  tomorrow. This is what you see when you walk up to it.
 - **Week view** — a proper timed grid, laid out so a week of shifts is readable
   from across the room. Overlapping events sit side by side.
 - **Month view** — the whole month; tap a day to jump to it.
@@ -20,6 +45,10 @@ feeds and everything else stays on the box.
 - **Add appointments on the panel** — big touch targets, native date and time
   pickers.
 - **Quiet hours** — blanks overnight, but presence still wakes it.
+- **Remote page for family** — check it's alive, see what's coming up, send
+  photos, add an appointment, all from a phone.
+- **Keeps working offline** — the last good copy of each calendar is saved to
+  disk, so a power cut plus a dead router doesn't leave a blank wall.
 
 Calendars sync one-way and read-only: your phone stays the place you edit things,
 and the panel can't corrupt them. Events added on the panel live in its own
@@ -59,9 +88,16 @@ Treat these URLs as passwords — anyone holding one can read that calendar.
 
 ### Photos
 
-Drop images into `photos/`. They're picked up within 15 minutes, no restart. Any
-mix of JPEG, PNG, WebP, or AVIF works. Landscape images suit a landscape panel;
-if you mount it portrait, portrait photos.
+Two ways in:
+
+- **From a phone or laptop** — open `http://<its-ip>:8080/remote`, tap
+  **Add photos**. iPhone HEIC is fine; everything is rotated upright, resized,
+  and converted on the way in. This is the way family should use.
+- **Straight onto the device** — drop files into `photos/`. Picked up within
+  15 minutes, no restart.
+
+Landscape images suit a landscape panel; if you mount it portrait, portrait
+photos.
 
 ## Configuration
 
@@ -77,9 +113,22 @@ display:
   photo_interval_seconds: 45
   quiet_hours: { enabled: true, start: "23:00", end: "06:30" }
 
+accessibility:
+  theme: light                    # light | dark
+  text_scale: 1.0                 # 1.25 or 1.5 if they squint
+  simple_view: true               # the big "what's next" screen
+  show_week_month: true           # false = one screen, no navigation
+  reduce_motion: false
+
+remote:
+  token: ""                       # REQUIRED for phone access; see below
+  device_name: "Mom's Wall Calendar"
+
 presence:
   backend: http                   # none | http | gpio | serial
 ```
+
+Changes take effect on `sudo systemctl restart walldisplay`.
 
 ### Presence
 
@@ -123,15 +172,41 @@ WALLDISPLAY_URL=http://server:8080 ./setup/install.sh   # on the panel
 Presence then has to be the `http` backend — a wired sensor only works on the
 machine it's plugged into.
 
+## Checking on it remotely
+
+`http://<its-ip>:8080/remote` is a phone-shaped page for whoever looks after the
+person using the panel. It shows whether the display is awake, whether the
+calendars are still syncing, how much disk is left, what's coming up, and lets
+you send photos or add an appointment.
+
+Set an access code first — without one the page is refused from every device
+except the panel itself:
+
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(24))"   # paste into remote.token
+sudo systemctl restart walldisplay
+```
+
+To reach it from outside the house, install Tailscale on the device rather than
+forwarding a port. Full walkthrough, including sharing access with a sibling:
+[docs/remote-access.md](docs/remote-access.md).
+
 ## Security
 
-**There is no authentication.** Anyone who can reach port 8080 can read your
-calendar and write events to it. That's a deliberate tradeoff for a device on
-your home LAN, and it's what makes the Home Assistant integration trivial.
+The panel's own browser is trusted because it connects over loopback — touching
+the screen is already physical access. Everything arriving over the network is
+checked against `remote.token`:
 
-Do not port-forward it. If you need to reach it from outside the house, put it on
-Tailscale or a WireGuard tunnel. If you build the email/SMS importer, read the
-authentication section of that doc first.
+| | Without a token set | With a token set |
+|---|---|---|
+| Reading the calendar over the LAN | allowed | allowed |
+| Adding/deleting events over the LAN | allowed | needs the token |
+| `/remote`, photo upload/delete, status | device only | needs the token |
+| On the panel itself | always allowed | always allowed |
+
+Reads stay open either way, so a Home Assistant dashboard or a spare tablet can
+show the same calendar without credentials. **Set a token if anyone but you is
+on the network**, and don't port-forward the panel — use Tailscale.
 
 ## Development
 
@@ -151,12 +226,14 @@ a toolchain that needs updating is one more thing that can rot.
 ```
 app/
   main.py        FastAPI app, REST + WebSocket
+  auth.py        Token guard (loopback is always trusted)
   config.py      YAML config with defaults
-  calendars.py   ICS fetching, recurrence expansion
+  calendars.py   ICS fetching, recurrence expansion, on-disk cache
+  photos.py      Upload normalising: EXIF rotation, resize, HEIC
   store.py       SQLite for locally-owned events
   presence.py    Presence backends (GPIO, mmWave serial, HTTP)
   state.py       photos ↔ calendar ↔ off state machine
-web/             The kiosk page
+web/             The kiosk page (index) and the remote page (remote)
 setup/           Installer, systemd units, kiosk launcher
 tests/           pytest suite
 ```
@@ -172,6 +249,9 @@ tests/           pytest suite
 | `GET /api/state` · `POST /api/state/mode` | Read / override display mode |
 | `POST /api/presence` | Report presence — any sensor, any script |
 | `GET /api/photos` · `GET /api/settings` · `GET /api/health` | |
+| `POST /api/photos` | Upload photos (multipart, batch) — token required |
+| `DELETE /api/photos/{name}` | Remove a photo — token required |
+| `GET /api/status` | Everything the remote page shows — token required |
 | `WS /ws` | Push: mode changes, calendar refreshes |
 
 ## Troubleshooting
