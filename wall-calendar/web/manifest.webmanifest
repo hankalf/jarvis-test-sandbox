@@ -1,0 +1,14 @@
+{
+  "name": "Wall Calendar",
+  "short_name": "Wall Cal",
+  "description": "Check on the wall calendar, add appointments and work schedules, send photos.",
+  "start_url": "/remote",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f4f0",
+  "theme_color": "#17509e",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

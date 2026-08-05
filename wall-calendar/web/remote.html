@@ -4,8 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#17509e">
 <title>Wall Calendar — Remote</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%2317509e'/></svg>">
+<!-- Installable: "Add to Home Screen" gives this page an icon and a full-screen
+     window, which for the person using it is indistinguishable from an app. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Wall Calendar">
 <link rel="stylesheet" href="/remote.css">
 </head>
 <body>
@@ -50,7 +57,10 @@
   <section class="card">
     <h2>Coming up</h2>
     <ul class="upcoming" id="upcoming"><li class="muted">Loading…</li></ul>
-    <button class="btn primary" id="btn-add">Add an appointment</button>
+    <div class="row-actions">
+      <button class="btn primary" id="btn-add">Add an appointment</button>
+      <button class="btn" id="btn-schedule">Add a work schedule</button>
+    </div>
   </section>
 
   <!-- Photos -->
@@ -106,6 +116,63 @@
     <div class="row-actions">
       <button type="button" class="btn" id="e-cancel">Cancel</button>
       <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</div>
+
+<!-- Work-schedule dialog: pick the days, one time, how many weeks. -->
+<div class="sheet" id="schedule-sheet" hidden role="dialog" aria-modal="true">
+  <h2>Work schedule</h2>
+  <p class="muted">Repeats weekly on the days you pick. Each shift can be
+    removed individually later if one gets swapped.</p>
+  <form id="schedule-form">
+    <label for="s-title">Name</label>
+    <input id="s-title" name="title" required maxlength="200" value="Work">
+    <label>Days</label>
+    <div class="daypick" id="daypick">
+      <button type="button" data-day="mon">Mon</button>
+      <button type="button" data-day="tue">Tue</button>
+      <button type="button" data-day="wed">Wed</button>
+      <button type="button" data-day="thu">Thu</button>
+      <button type="button" data-day="fri">Fri</button>
+      <button type="button" data-day="sat">Sat</button>
+      <button type="button" data-day="sun">Sun</button>
+    </div>
+    <div class="two">
+      <div>
+        <label for="s-start">Starts</label>
+        <input id="s-start" name="time" type="time" value="09:00" required>
+      </div>
+      <div>
+        <label for="s-length">Shift length</label>
+        <select id="s-length" name="length">
+          <option value="240">4 hours</option>
+          <option value="360">6 hours</option>
+          <option value="480" selected>8 hours</option>
+          <option value="600">10 hours</option>
+          <option value="720">12 hours</option>
+        </select>
+      </div>
+    </div>
+    <div class="two">
+      <div>
+        <label for="s-from">First day</label>
+        <input id="s-from" name="from" type="date" required>
+      </div>
+      <div>
+        <label for="s-weeks">For</label>
+        <select id="s-weeks" name="weeks">
+          <option value="4">4 weeks</option>
+          <option value="8">8 weeks</option>
+          <option value="12" selected>12 weeks</option>
+          <option value="26">26 weeks</option>
+        </select>
+      </div>
+    </div>
+    <p class="error" id="schedule-error"></p>
+    <div class="row-actions">
+      <button type="button" class="btn" id="s-cancel">Cancel</button>
+      <button type="submit" class="btn primary">Add schedule</button>
     </div>
   </form>
 </div>

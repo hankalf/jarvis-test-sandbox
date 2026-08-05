@@ -60,6 +60,19 @@ WireGuard directly is equivalent if you already run it. A Cloudflare Tunnel also
 works but puts a third party in front of the medical calendar — Tailscale keeps
 the traffic between your own devices.
 
+## Put it on the phone's home screen
+
+The remote page is installable, which makes it feel like a normal app — its own
+icon, full screen, no browser chrome:
+
+- **iPhone:** open the page in Safari → Share → **Add to Home Screen**.
+- **Android:** open it in Chrome → menu (⋮) → **Add to Home screen** (or
+  "Install app" when offered).
+
+Do this after entering the access code once, and the installed app stays signed
+in. For anyone likely to be flustered by a browser, hand them the phone with
+the icon already on the home screen.
+
 ## What the page shows
 
 | | Means |
@@ -91,11 +104,16 @@ nineteen photos onto the wall.
 The panel picks up new photos immediately — no restart, and no need to be
 standing in front of it.
 
-## Adding an appointment
+## Adding an appointment or a work schedule
 
 Appointments added here appear on the panel straight away, labelled so they're
 distinguishable from the synced calendars. They live in the panel's own database
 and don't write back to Google or iCloud.
+
+**Add a work schedule** is for shift patterns: pick the days of the week, the
+start time and shift length, and how many weeks ahead, and every shift lands on
+the panel at once. If one shift gets swapped later, open it on the panel and
+delete just that one — the rest of the pattern stays.
 
 If you'd rather everything came from one place, add it to the shared Google or
 iCloud calendar instead and let it sync — the panel picks it up on the next

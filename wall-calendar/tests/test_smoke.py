@@ -479,6 +479,205 @@ def test_hidable_elements_survive_their_own_display_rule(stylesheet, selector):
     )
 
 
+# --- work schedules (repeating series) ----------------------------------
+
+
+def test_work_schedule_creates_a_series(client):
+    created = client.post(
+        "/api/events",
+        json={
+            "title": "Shift — front desk",
+            "start": "2026-08-10T09:00:00",  # a Monday
+            "end": "2026-08-10T17:00:00",
+            "calendar": "Work",
+            "repeat": {"days": ["mon", "wed", "fri"], "weeks": 2},
+        },
+    )
+    assert created.status_code == 201
+    body = created.json()
+    assert body["status"] == "series" and body["created"] == 6
+
+    events = client.get("/api/events?days=30&back=30").json()["events"]
+    shifts = [e for e in events if e["title"] == "Shift — front desk"]
+    assert len(shifts) == 6
+    assert all(s["seriesId"] == body["seriesId"] for s in shifts)
+    starts = sorted(s["start"][:10] for s in shifts)
+    assert starts == ["2026-08-10", "2026-08-12", "2026-08-14",
+                      "2026-08-17", "2026-08-19", "2026-08-21"]
+    # Times survive onto every occurrence, in the display's timezone.
+    assert all(s["start"].endswith("09:00:00-04:00") for s in shifts)
+
+
+def test_one_shift_or_the_whole_series_can_be_deleted(client):
+    body = client.post(
+        "/api/events",
+        json={
+            "title": "Evening shift",
+            "start": "2026-08-10T17:00:00",
+            "end": "2026-08-10T22:00:00",
+            "repeat": {"days": ["mon", "tue"], "weeks": 3},
+        },
+    ).json()
+    assert body["created"] == 6
+
+    events = client.get("/api/events?days=30&back=30").json()["events"]
+    shifts = [e for e in events if e["title"] == "Evening shift"]
+
+    # A swapped shift: delete just that one.
+    assert client.delete(f"/api/events/{shifts[0]['id']}").status_code == 200
+    remaining = [e for e in client.get("/api/events?days=30&back=30").json()["events"]
+                 if e["title"] == "Evening shift"]
+    assert len(remaining) == 5
+
+    # The job ended: delete the rest in one go.
+    deleted = client.delete(f"/api/events/{remaining[0]['id']}?series=true")
+    assert deleted.status_code == 200 and deleted.json()["count"] == 5
+    assert [e for e in client.get("/api/events?days=30&back=30").json()["events"]
+            if e["title"] == "Evening shift"] == []
+
+
+def test_bad_weekday_is_rejected(client):
+    response = client.post(
+        "/api/events",
+        json={
+            "title": "X", "start": "2026-08-10T09:00:00", "end": "2026-08-10T10:00:00",
+            "repeat": {"days": ["funday"], "weeks": 1},
+        },
+    )
+    assert response.status_code == 400
+
+
+# --- phase 2: the importer ----------------------------------------------
+
+
+class FakeExtractor:
+    available = (True, "")
+
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    def extract(self, *, sender, subject, body, today):
+        self.calls.append({"sender": sender, "body": body})
+        return dict(self.result)
+
+
+APPOINTMENT = {
+    "is_appointment": True,
+    "title": "MRI — knee",
+    "start": "2026-08-20T10:30:00",
+    "duration_minutes": 45,
+    "location": "Radiology, 2nd floor",
+    "confidence": 0.93,
+    "notes": "Arrive 15 minutes early.",
+}
+
+
+@pytest.fixture()
+def importer_client(tmp_path: Path, monkeypatch):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "timezone: America/New_York\ncalendars: []\ndata_dir: data\n"
+        "display:\n  photo_dir: photos\n"
+        "importer:\n  enabled: true\n  dry_run: false\n"
+    )
+    monkeypatch.setenv("WALLDISPLAY_CONFIG", str(config_file))
+    for module in [m for m in list(sys.modules) if m.startswith("app.")]:
+        del sys.modules[module]
+    from app.main import app
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as test_client:
+        yield test_client, app
+
+
+def test_importer_writes_unconfirmed_events(importer_client):
+    client, app = importer_client
+    app.state.importer.extractor = FakeExtractor(APPOINTMENT)
+
+    result = client.post(
+        "/api/import/message",
+        json={"text": "Your MRI is confirmed...", "sender": "radiology@clinic.com", "ref": "msg-1"},
+    )
+    assert result.status_code == 200
+    body = result.json()
+    assert body["action"] == "imported"
+    event = body["event"]
+    assert event["confirmed"] is False, "imported events must never be auto-trusted"
+    assert event["title"] == "MRI — knee"
+    assert event["start"] == "2026-08-20T10:30:00-04:00"  # stamped with display tz
+    assert event["end"] == "2026-08-20T11:15:00-04:00"    # 45 minutes
+
+    # Same ref again: dedupe, not a second event.
+    again = client.post(
+        "/api/import/message",
+        json={"text": "Your MRI is confirmed...", "sender": "radiology@clinic.com", "ref": "msg-1"},
+    ).json()
+    assert again["action"] == "duplicate"
+    events = client.get("/api/events?days=60").json()["events"]
+    assert len([e for e in events if e["title"] == "MRI — knee"]) == 1
+
+
+def test_importer_skips_non_appointments_and_low_confidence(importer_client):
+    client, app = importer_client
+
+    app.state.importer.extractor = FakeExtractor({**APPOINTMENT, "is_appointment": False})
+    assert client.post("/api/import/message", json={"text": "SALE! 20% off"}).json()["action"] == "skipped"
+
+    app.state.importer.extractor = FakeExtractor({**APPOINTMENT, "confidence": 0.3})
+    assert client.post("/api/import/message", json={"text": "maybe thursday?"}).json()["action"] == "skipped"
+
+    app.state.importer.extractor = FakeExtractor({**APPOINTMENT, "start": "sometime"})
+    assert client.post("/api/import/message", json={"text": "no date"}).json()["action"] == "skipped"
+
+    assert client.get("/api/events?days=60").json()["events"] == []
+
+
+def test_importer_dry_run_logs_but_writes_nothing(tmp_path: Path, monkeypatch):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "timezone: America/New_York\ncalendars: []\ndata_dir: data\n"
+        "display:\n  photo_dir: photos\n"
+        "importer:\n  enabled: true\n  dry_run: true\n"
+    )
+    monkeypatch.setenv("WALLDISPLAY_CONFIG", str(config_file))
+    for module in [m for m in list(sys.modules) if m.startswith("app.")]:
+        del sys.modules[module]
+    from app.main import app
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        app.state.importer.extractor = FakeExtractor(APPOINTMENT)
+        result = client.post("/api/import/message", json={"text": "Your MRI is confirmed"}).json()
+        assert result["action"] == "dry_run"
+        assert client.get("/api/events?days=60").json()["events"] == []
+
+        log_file = tmp_path / "data" / "import-log.jsonl"
+        assert log_file.exists()
+        import json as jsonlib
+        entry = jsonlib.loads(log_file.read_text().splitlines()[-1])
+        assert entry["action"] == "dry_run"
+        assert entry["extraction"]["title"] == "MRI — knee"
+
+
+def test_importer_disabled_and_unavailable_report_clearly(client, importer_client):
+    # Default config: disabled entirely.
+    assert client.post("/api/import/message", json={"text": "hi"}).status_code == 503
+
+    # Enabled but no API key / package: says why instead of failing silently.
+    icli, app = importer_client
+    app.state.importer.extractor.api_key = ""  # the real ClaudeExtractor
+    response = icli.post("/api/import/message", json={"text": "hi"})
+    assert response.status_code == 503
+    assert "API key" in response.json()["detail"]
+
+
+def test_manifest_and_icons_are_served(client):
+    manifest = client.get("/manifest.webmanifest")
+    assert manifest.status_code == 200
+    assert manifest.headers["content-type"].startswith("application/manifest+json")
+    assert manifest.json()["start_url"] == "/remote"
+    assert client.get("/icons/icon-192.png").status_code == 200
+
+
 def test_remote_page_is_served(client):
     page = client.get("/remote")
     assert page.status_code == 200 and "Access code" in page.text

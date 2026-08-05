@@ -14,6 +14,10 @@ python-multipart>=0.0.9
 Pillow>=10.2
 pillow-heif>=0.16
 
+# Only needed when importer.enabled is true (phase 2 -- extraction of
+# appointments from email/texts via the Claude API):
+# anthropic>=0.40
+
 # Only needed for the matching presence backend; harmless to install anyway.
 # pyserial>=3.5      # presence.backend: serial  (LD2410 mmWave over USB)
 # gpiozero>=2.0      # presence.backend: gpio    (Raspberry Pi only)

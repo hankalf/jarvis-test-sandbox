@@ -45,6 +45,22 @@ DEFAULTS: dict[str, Any] = {
         "max_upload_mb": 40,
         "resize_long_edge": 2560,
     },
+    "importer": {
+        "enabled": False,
+        "dry_run": True,
+        "min_confidence": 0.5,
+        "calendar": "From email",
+        "color": "#7a3fa0",
+        "model": "claude-opus-5",
+        "api_key": "",
+        "gmail": {
+            "host": "imap.gmail.com",
+            "username": "",
+            "app_password": "",
+            "folder": "Appointments",
+            "poll_minutes": 10,
+        },
+    },
     "data_dir": "data",
 }
 
@@ -125,6 +141,12 @@ class Config:
     @property
     def remote(self) -> dict:
         return self._data["remote"]
+
+    @property
+    def importer(self) -> dict:
+        out = dict(self._data["importer"])
+        out["_log_path"] = str(self.data_dir / "import-log.jsonl")
+        return out
 
     @property
     def photo_dir(self) -> Path:

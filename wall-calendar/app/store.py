@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS local_events (
     source      TEXT NOT NULL DEFAULT 'manual',
     source_ref  TEXT,
     confirmed   INTEGER NOT NULL DEFAULT 1,
+    series_id   TEXT,
     created_at  TEXT NOT NULL
 );
 
@@ -44,7 +45,15 @@ class Store:
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """CREATE IF NOT EXISTS skips existing tables, so databases from
+        before a column existed need it added by hand."""
+        columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(local_events)")}
+        if "series_id" not in columns:
+            self._conn.execute("ALTER TABLE local_events ADD COLUMN series_id TEXT")
 
     def close(self) -> None:
         self._conn.close()
@@ -63,6 +72,7 @@ class Store:
         source: str = "manual",
         source_ref: str | None = None,
         confirmed: bool = True,
+        series_id: str | None = None,
     ) -> dict | None:
         """Insert an event. Returns None if source_ref was already imported."""
         row = {
@@ -78,21 +88,35 @@ class Store:
             "source": source,
             "source_ref": source_ref,
             "confirmed": int(confirmed),
+            "series_id": series_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         try:
             self._conn.execute(
                 "INSERT INTO local_events "
                 "(id, title, start, end, all_day, location, notes, calendar, color,"
-                " source, source_ref, confirmed, created_at) "
+                " source, source_ref, confirmed, series_id, created_at) "
                 "VALUES (:id, :title, :start, :end, :all_day, :location, :notes,"
-                " :calendar, :color, :source, :source_ref, :confirmed, :created_at)",
+                " :calendar, :color, :source, :source_ref, :confirmed, :series_id, :created_at)",
                 row,
             )
             self._conn.commit()
         except sqlite3.IntegrityError:
             return None
         return self._to_event(row)
+
+    def get_event(self, event_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM local_events WHERE id = ?", (event_id,)
+        ).fetchone()
+        return self._to_event(dict(row)) if row else None
+
+    def delete_series(self, series_id: str) -> int:
+        cur = self._conn.execute(
+            "DELETE FROM local_events WHERE series_id = ?", (series_id,)
+        )
+        self._conn.commit()
+        return cur.rowcount
 
     def delete_event(self, event_id: str) -> bool:
         cur = self._conn.execute("DELETE FROM local_events WHERE id = ?", (event_id,))
@@ -130,5 +154,6 @@ class Store:
             "color": row["color"],
             "source": row["source"],
             "confirmed": bool(row["confirmed"]),
+            "seriesId": row.get("series_id"),
             "editable": True,
         }

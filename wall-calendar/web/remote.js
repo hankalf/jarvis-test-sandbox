@@ -269,6 +269,59 @@ async function submitEvent(event) {
   }
 }
 
+// ------------------------------------------------------------ work schedule
+
+function openScheduleSheet() {
+  const local = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+  el("schedule-form").reset();
+  el("s-from").value = local;
+  el("schedule-error").textContent = "";
+  for (const b of el("daypick").querySelectorAll("button")) b.classList.remove("is-on");
+  el("schedule-sheet").hidden = false;
+  el("scrim").hidden = false;
+}
+
+function closeScheduleSheet() {
+  el("schedule-sheet").hidden = true;
+  el("scrim").hidden = true;
+}
+
+async function submitSchedule(event) {
+  event.preventDefault();
+  const days = [...el("daypick").querySelectorAll("button.is-on")].map((b) => b.dataset.day);
+  if (!days.length) {
+    el("schedule-error").textContent = "Pick at least one day.";
+    return;
+  }
+  const data = new FormData(el("schedule-form"));
+  const start = `${data.get("from")}T${data.get("time")}:00`;
+  const minutes = parseInt(data.get("length"), 10);
+  const end = new Date(new Date(`${start}Z`).getTime() + minutes * 60000)
+    .toISOString().slice(0, 19);
+
+  try {
+    const result = await api("/api/events", {
+      method: "POST",
+      body: JSON.stringify({
+        title: data.get("title"),
+        start, end,
+        calendar: "Work",
+        color: "#17509e",
+        repeat: { days, weeks: parseInt(data.get("weeks"), 10) },
+      }),
+    });
+    closeScheduleSheet();
+    el("upload-status").innerHTML = "";
+    await refreshStatus();
+    alert(`Added ${result.created} shifts to the display.`);
+  } catch (err) {
+    if (err instanceof AuthError) return showGate("Access code rejected");
+    el("schedule-error").textContent = err.message;
+  }
+}
+
 // --------------------------------------------------------------------- gate
 
 function showGate(message = "") {
@@ -337,8 +390,16 @@ function wire() {
 
   el("btn-add").addEventListener("click", openSheet);
   el("e-cancel").addEventListener("click", closeSheet);
-  el("scrim").addEventListener("click", closeSheet);
+  el("scrim").addEventListener("click", () => { closeSheet(); closeScheduleSheet(); });
   el("event-form").addEventListener("submit", submitEvent);
+
+  el("btn-schedule").addEventListener("click", openScheduleSheet);
+  el("s-cancel").addEventListener("click", closeScheduleSheet);
+  el("schedule-form").addEventListener("submit", submitSchedule);
+  el("daypick").addEventListener("click", (e) => {
+    const button = e.target.closest("button[data-day]");
+    if (button) button.classList.toggle("is-on");
+  });
 
   const input = el("file-input");
   const zone = el("dropzone");

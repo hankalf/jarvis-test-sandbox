@@ -982,12 +982,25 @@ function openDetail(ev) {
     if (ev.editable) {
       const remove = document.createElement("button");
       remove.className = "btn danger";
-      remove.textContent = "Delete";
+      remove.textContent = ev.seriesId ? "Delete this one" : "Delete";
       remove.addEventListener("click", async () => {
         await api(`/api/events/${ev.id}`, { method: "DELETE" });
         closeSheet();
       });
       actions.appendChild(remove);
+
+      // Repeating shifts get a second option, clearly worded -- "delete the
+      // whole series" phrased as what it actually removes.
+      if (ev.seriesId) {
+        const removeAll = document.createElement("button");
+        removeAll.className = "btn danger";
+        removeAll.textContent = "Delete all repeats";
+        removeAll.addEventListener("click", async () => {
+          await api(`/api/events/${ev.id}?series=true`, { method: "DELETE" });
+          closeSheet();
+        });
+        actions.appendChild(removeAll);
+      }
     }
     const close = document.createElement("button");
     close.className = "btn";

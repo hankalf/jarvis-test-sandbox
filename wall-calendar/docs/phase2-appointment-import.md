@@ -1,8 +1,17 @@
 # Phase 2 — pulling appointments out of email and texts
 
-Not built yet. The panel is designed for it, though: the database, the API, and
-the UI already handle imported-but-unconfirmed events, so the importer is a
-separate small program that talks to the same `POST /api/events` endpoint.
+**Status: built, ships disabled.** The pipeline lives in `app/importer.py`:
+a `POST /api/import/message` endpoint for forwarded texts, an IMAP poller for
+one labelled Gmail folder, Claude extraction with a validated schema, and the
+confidence gate. Turn it on in `config.yaml` (`importer:` section) — it starts
+in `dry_run` mode, which is step 1 of the build order below and is not optional.
+
+To use it you need the extraction dependency and a key:
+
+```bash
+.venv/bin/pip install anthropic
+# put the key in importer.api_key, or export ANTHROPIC_API_KEY
+```
 
 Read the "Confirmation" section before anything else. It's the part that decides
 whether this feature is useful or actively harmful.
@@ -53,24 +62,12 @@ re-polling the same message returns `{"status": "duplicate"}` instead of adding 
 second copy. Use a stable per-message identifier: the Gmail message ID, or a hash
 of the SMS body plus sender.
 
-## Before you build this: the server has no authentication
+## Reaching the importer from a phone
 
-`POST /api/events` is unauthenticated. That's fine for a panel on your own LAN,
-and it's what makes the Home Assistant presence integration a two-line
-automation. It is **not** fine to expose to the internet so a phone Shortcut can
-reach it — anyone who finds the URL can write to your calendar.
-
-Two workable options, in order of preference:
-
-1. **Tailscale (or WireGuard) on the panel.** Your phone and the panel join the
-   same private network; the Shortcut posts to the panel's Tailscale IP. Nothing
-   is exposed publicly. This is the right answer for a household.
-2. **Add a shared-secret header** and put a reverse proxy with TLS in front. If
-   you go this route, add the check in `app/main.py` before anything else — a
-   dependency that compares a header against a value in `config.yaml` using
-   `hmac.compare_digest`, applied to the write endpoints.
-
-Do not skip this step and port-forward 8080.
+`/api/import/message` sits behind the same `remote.token` as the rest of the
+remote surface — the Shortcut sends the code in an `X-Wall-Token` header. For
+outside the house, put the panel on Tailscale (see docs/remote-access.md) and
+point the Shortcut at the Tailscale address. Do not port-forward 8080.
 
 ## Gmail
 
@@ -87,21 +84,9 @@ Auth: an [app password](https://myaccount.google.com/apppasswords) with plain
 IMAP is the least moving parts. The Gmail API with OAuth is more robust long-term
 but needs a consent flow and token refresh — not worth it for one mailbox.
 
-```python
-import imaplib, email
-from email.header import decode_header
-
-with imaplib.IMAP4_SSL("imap.gmail.com") as M:
-    M.login(ADDRESS, APP_PASSWORD)
-    M.select('"Appointments"')          # the label your filter applies
-    _, ids = M.search(None, "UNSEEN")
-    for msg_id in ids[0].split():
-        _, data = M.fetch(msg_id, "(RFC822)")
-        message = email.message_from_bytes(data[0][1])
-        ...  # hand the body to the extractor below
-```
-
-Poll every 10–15 minutes from a systemd timer. There's no need for push.
+Fill in `importer.gmail` in `config.yaml`; the poller runs inside the server
+every `poll_minutes` and only reads UNSEEN mail in that one folder. There's no
+need for push.
 
 ## iPhone texts
 
@@ -117,8 +102,9 @@ Message. Trigger on messages containing "appointment", "confirmed", "scheduled",
 or on messages from specific senders (your clinic's number). Since iOS 17 these
 can run without a confirmation tap. The action is `Get Contents of URL`:
 
-- URL: `http://<panel-tailscale-ip>:8081/import/sms`
+- URL: `http://<panel-tailscale-ip>:8080/api/import/message`
 - Method: POST
+- Headers: `X-Wall-Token` = the access code from `config.yaml`
 - Request Body: JSON → `text` = Shortcut Input, `sender` = Sender
 
 This is genuinely hands-off once configured, and it's the only iOS option that
@@ -222,19 +208,20 @@ can do this, but on a Pi or an N100 with no GPU, extraction quality drops enough
 that you'd be confirming almost everything by hand. At that point the Share Sheet
 shortcut is the better trade.
 
-## Build order
+## Rollout order
 
-1. **The importer skeleton** — a `POST /import/sms` endpoint and an IMAP poller,
-   both writing to a log file instead of the calendar. Run it for a week and read
-   the log. You'll learn what your actual appointment mail looks like, and your
-   Gmail filter will be wrong in ways you can't predict from here.
-2. **Add extraction**, still logging rather than posting. Check the dates it
-   produces against the messages by hand.
-3. **Start posting** with `confirmed: false`. Live with it for a few weeks.
-4. **Only then** consider auto-confirming high-confidence events from senders
-   you've confirmed correctly many times before — and keep medical appointments
-   manual regardless.
+The code for all of this exists; the order is about trust, not implementation.
 
-Steps 1 and 2 are not optional busywork. Extraction quality on your real mail is
-the thing that determines whether this feature is worth having, and you cannot
-find that out without looking at your real mail.
+1. **`dry_run: true`** (the default). Messages are extracted and logged to
+   `data/import-log.jsonl`, nothing touches the calendar. Run a week; read the
+   log; check the dates against the messages by hand. Your Gmail filter will be
+   wrong in ways you can't predict from here.
+2. **`dry_run: false`.** Events appear on the panel dashed and amber, and stay
+   that way until confirmed. Live with it a few weeks.
+3. **Only then** consider auto-confirming high-confidence events from senders
+   the log shows have extracted correctly many times — and keep medical
+   appointments manual regardless. (Deliberately not implemented yet.)
+
+Step 1 is not optional busywork. Extraction quality on your real mail is the
+thing that determines whether this feature is worth having, and you cannot find
+that out without looking at your real mail.

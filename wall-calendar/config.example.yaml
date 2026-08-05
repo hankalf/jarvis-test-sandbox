@@ -79,6 +79,34 @@ remote:
   # on every slideshow tick.
   resize_long_edge: 2560
 
+# Phase 2: pulling appointments out of email and forwarded texts.
+# Read docs/phase2-appointment-import.md before enabling. Everything imported
+# lands UNCONFIRMED -- dashed and amber on the panel until someone taps Confirm.
+importer:
+  enabled: false
+  # Keep true for the first week: messages are parsed and logged to
+  # data/import-log.jsonl but nothing is written to the calendar. Read the log,
+  # check the dates it extracted, then set false.
+  dry_run: true
+  # Extractions below this confidence are logged and dropped.
+  min_confidence: 0.5
+  calendar: "From email"
+  color: "#7a3fa0"
+  # Extraction uses the Claude API (pip install anthropic). The key can also
+  # come from the ANTHROPIC_API_KEY environment variable.
+  model: claude-opus-5
+  api_key: ""
+  # Optional: poll one Gmail label over IMAP. Create a Gmail filter that
+  # applies the label to likely appointment mail first -- never point this at
+  # your whole inbox (cost, and far more of your mail leaves the house than
+  # the task needs). Use an app password: https://myaccount.google.com/apppasswords
+  gmail:
+    host: imap.gmail.com
+    username: ""
+    app_password: ""
+    folder: "Appointments"
+    poll_minutes: 10
+
 presence:
   # none   - always show the calendar, no presence handling at all
   # http   - something else POSTs /api/presence (Home Assistant, a sensor script)

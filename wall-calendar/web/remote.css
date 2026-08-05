@@ -211,3 +211,20 @@ label { display: block; font-size: 0.85rem; color: var(--dim); margin: 0.75rem 0
 }
 .sheet h2 { margin-bottom: 0.25rem; }
 .two { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+
+.daypick { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.3rem; }
+.daypick button {
+  min-height: 48px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+.daypick button.is-on {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}

@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import shutil
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -30,6 +31,7 @@ from . import photos as photo_lib
 from .auth import TokenGuard, token_warnings
 from .calendars import CalendarFeeds
 from .config import Config
+from .importer import ImporterManager
 from .presence import PresenceManager
 from .state import DisplayController
 from .store import Store
@@ -59,6 +61,17 @@ require_remote = TokenGuard(CONFIG, remote_only=True)
 STARTED_AT = datetime.now(timezone.utc)
 
 
+WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+
+
+class Repeat(BaseModel):
+    """Weekly repetition, which is what a work schedule is: 'Mondays,
+    Wednesdays, and Fridays, 9 to 5, for the next 12 weeks'."""
+
+    days: list[str] = Field(min_length=1, max_length=7)
+    weeks: int = Field(default=4, ge=1, le=52)
+
+
 class NewEvent(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     start: datetime
@@ -68,6 +81,7 @@ class NewEvent(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
     calendar: str = Field(default="Added here", max_length=80)
     color: str = Field(default="#8b93a7", max_length=32)
+    repeat: Repeat | None = None
     # Reserved for the email/SMS importer: set these and re-imports dedupe.
     source: str = Field(default="manual", max_length=32)
     sourceRef: str | None = Field(default=None, max_length=300)
@@ -76,6 +90,13 @@ class NewEvent(BaseModel):
 
 class ModeRequest(BaseModel):
     mode: str
+
+
+class ImportMessage(BaseModel):
+    text: str = Field(min_length=1, max_length=20000)
+    sender: str = Field(default="", max_length=200)
+    subject: str = Field(default="", max_length=500)
+    ref: str | None = Field(default=None, max_length=200)
 
 
 @asynccontextmanager
@@ -91,15 +112,18 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(feeds.load_cache)
     presence = PresenceManager(config.presence)
     controller = DisplayController(config.display, presence, tz)
+    importer = ImporterManager(config.importer, store, tz, controller.broadcast)
 
     app.state.config = config
     app.state.store = store
     app.state.feeds = feeds
     app.state.presence = presence
     app.state.controller = controller
+    app.state.importer = importer
 
     await presence.start()
     await controller.start()
+    await importer.start_with_loop()
     refresher = asyncio.create_task(_refresh_loop(feeds, controller, config.refresh_seconds))
 
     log.info(
@@ -116,6 +140,7 @@ async def lifespan(app: FastAPI):
             await refresher
         except asyncio.CancelledError:
             pass
+        await importer.stop()
         await controller.stop()
         await presence.stop()
         store.close()
@@ -197,18 +222,49 @@ async def create_event(payload: NewEvent):
     if end <= start:
         raise HTTPException(status_code=400, detail="end must be after start")
 
-    event = app.state.store.add_event(
+    common = dict(
         title=payload.title,
-        start=start,
-        end=end,
         all_day=payload.allDay,
         location=payload.location,
         notes=payload.notes,
         calendar=payload.calendar,
         color=payload.color,
         source=payload.source,
-        source_ref=payload.sourceRef,
         confirmed=payload.confirmed,
+    )
+
+    if payload.repeat is not None:
+        # A work schedule: materialise one row per occurrence. Rows are simple
+        # to reason about, render, and delete one-at-a-time when a single
+        # shift gets swapped -- which with real rosters is constant.
+        try:
+            wanted = {WEEKDAYS[d.lower()[:3]] for d in payload.repeat.days}
+        except KeyError as exc:
+            raise HTTPException(status_code=400, detail=f"unknown weekday {exc}") from exc
+
+        series_id = uuid.uuid4().hex
+        duration = end - start
+        created = 0
+        first_day = start.date()
+        for offset in range(payload.repeat.weeks * 7):
+            day = first_day + timedelta(days=offset)
+            if day.weekday() not in wanted:
+                continue
+            occurrence_start = start.replace(year=day.year, month=day.month, day=day.day)
+            if app.state.store.add_event(
+                start=occurrence_start, end=occurrence_start + duration,
+                series_id=series_id, **common,
+            ):
+                created += 1
+        if created == 0:
+            raise HTTPException(status_code=400, detail="no occurrences in that range")
+        app.state.controller.broadcast({"type": "events-changed"})
+        return JSONResponse(
+            status_code=201, content={"status": "series", "created": created, "seriesId": series_id}
+        )
+
+    event = app.state.store.add_event(
+        start=start, end=end, source_ref=payload.sourceRef, **common
     )
     if event is None:
         # Already imported under this sourceRef -- not an error, just a no-op.
@@ -219,11 +275,38 @@ async def create_event(payload: NewEvent):
 
 
 @app.delete("/api/events/{event_id}", dependencies=[Depends(require_write)])
-async def delete_event(event_id: str):
-    if not app.state.store.delete_event(event_id):
+async def delete_event(event_id: str, series: bool = Query(default=False)):
+    store: Store = app.state.store
+    if series:
+        event = store.get_event(event_id)
+        if event is None:
+            raise HTTPException(status_code=404, detail="no such local event")
+        if event.get("seriesId"):
+            deleted = store.delete_series(event["seriesId"])
+        else:
+            deleted = int(store.delete_event(event_id))
+        app.state.controller.broadcast({"type": "events-changed"})
+        return {"status": "deleted", "count": deleted}
+
+    if not store.delete_event(event_id):
         raise HTTPException(status_code=404, detail="no such local event")
     app.state.controller.broadcast({"type": "events-changed"})
     return {"status": "deleted"}
+
+
+@app.post("/api/import/message", dependencies=[Depends(require_remote)])
+async def import_message(payload: ImportMessage):
+    """Phase 2 intake: an iPhone Shortcut or Android automation posts a
+    forwarded text here; the extractor decides if there's an appointment in
+    it. See docs/phase2-appointment-import.md."""
+    result = await app.state.importer.process(
+        text=payload.text, sender=payload.sender, subject=payload.subject, ref=payload.ref
+    )
+    if result["action"] == "disabled":
+        raise HTTPException(status_code=503, detail="importer is disabled in config.yaml")
+    if result["action"] == "unavailable":
+        raise HTTPException(status_code=503, detail=result["reason"])
+    return result
 
 
 @app.post("/api/events/{event_id}/confirm", dependencies=[Depends(require_write)])
@@ -314,6 +397,7 @@ async def status(request: Request):
         "photoBytes": sum(p["sizeBytes"] for p in photos),
         "diskFreeBytes": _disk_free(config.photo_dir),
         "upcoming": upcoming,
+        "importer": app.state.importer.describe(),
         "warnings": token_warnings(config),
     }
 
@@ -385,6 +469,13 @@ async def remote_page():
     """The caregiver page. Served without a token -- it asks for one itself,
     and every call it makes is guarded."""
     return FileResponse(WEB_DIR / "remote.html")
+
+
+@app.get("/manifest.webmanifest")
+async def manifest():
+    # Served explicitly for the media type; mimetypes guesses wrong on some
+    # systems and Chrome then refuses to treat the page as installable.
+    return FileResponse(WEB_DIR / "manifest.webmanifest", media_type="application/manifest+json")
 
 
 app.mount("/photos", StaticFiles(directory=CONFIG.photo_dir), name="photos")

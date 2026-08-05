@@ -150,14 +150,27 @@ Full bill of materials and the Pi-vs-mini-PC tradeoff:
 N100 mini PC or Pi 5, an LD2410 sensor, and a VESA mount, for roughly $400–600
 depending mostly on the monitor.
 
+## Work schedules
+
+**Add a work schedule** on the remote page takes a shift pattern — pick the
+days, a start time, a length, how many weeks — and puts every shift on the
+panel in one go. Each shift is an ordinary event afterwards: a swapped day can
+be deleted on its own ("Delete this one"), or the whole pattern at once
+("Delete all repeats") when the roster changes.
+
 ## Auto-importing appointments from email and texts
 
-Designed for, not built. The database, the API, and the UI already handle
-imported events — they show up dashed and amber with "Needs confirming" until you
-tap them — so the importer is a separate small program.
+Built, ships disabled. Enable `importer:` in `config.yaml` and it will pull
+appointments out of a labelled Gmail folder and out of texts forwarded by an
+iPhone Shortcut, using Claude to do the reading. Everything imported shows up
+dashed and amber with "Needs confirming" until a person taps Confirm — an
+extractor misreading a reschedule and silently writing a wrong date into a
+medical calendar would be worse than no automation at all.
 
-The design, including why iPhone texts are the hard case and what actually works
-there, is in [docs/phase2-appointment-import.md](docs/phase2-appointment-import.md).
+It starts in `dry_run` mode: a week of watching what it *would* have added,
+logged to `data/import-log.jsonl`, before you let it touch the calendar. Setup,
+the iPhone Shortcut recipe, and why texts are the hard case:
+[docs/phase2-appointment-import.md](docs/phase2-appointment-import.md).
 
 ## Running it as a container instead
 
