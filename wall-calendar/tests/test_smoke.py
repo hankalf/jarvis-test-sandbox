@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 import icalendar
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -978,3 +979,59 @@ def test_remote_page_is_served(client):
     assert page.status_code == 200 and "Access code" in page.text
     assert client.get("/remote.js").status_code == 200
     assert client.get("/remote.css").status_code == 200
+
+
+def test_config_edits_hit_the_right_block(tmp_path: Path):
+    """harden-for-public.sh rewrites a secret in place, so scoping matters."""
+    from setup.edit_config import set_in_remote
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "importer:\n"
+        "  # a decoy: this token must survive untouched\n"
+        "  token: \"DO-NOT-TOUCH\"\n"
+        "\n"
+        "remote:\n"
+        "  # the access code for /remote\n"
+        "  token: \"old-code\"\n"
+        "  trust_loopback: true\n"
+    )
+    set_in_remote(config_file, "token", '"new-code"')
+    set_in_remote(config_file, "trust_loopback", "false")
+
+    text = config_file.read_text()
+    assert 'token: "DO-NOT-TOUCH"' in text, "rewrote a token in the wrong block"
+    assert 'token: "new-code"' in text
+    assert "trust_loopback: false" in text
+    # The comments are most of this file's value; they must survive.
+    assert "# the access code for /remote" in text
+
+    loaded = yaml.safe_load(text)
+    assert loaded["remote"] == {"token": "new-code", "trust_loopback": False}
+    assert loaded["importer"]["token"] == "DO-NOT-TOUCH"
+
+
+def test_config_edits_add_missing_keys_and_blocks(tmp_path: Path):
+    from setup.edit_config import set_in_remote
+
+    # Key absent from an existing block.
+    partial = tmp_path / "partial.yaml"
+    partial.write_text("remote:\n  enabled: true\n\ndisplay:\n  mode: photos\n")
+    set_in_remote(partial, "trust_loopback", "false")
+    loaded = yaml.safe_load(partial.read_text())
+    assert loaded["remote"] == {"enabled": True, "trust_loopback": False}
+    assert loaded["display"] == {"mode": "photos"}, "leaked into the next block"
+
+    # No `remote:` block at all.
+    bare = tmp_path / "bare.yaml"
+    bare.write_text("display:\n  mode: photos\n")
+    set_in_remote(bare, "token", '"generated"')
+    assert yaml.safe_load(bare.read_text())["remote"] == {"token": "generated"}
+
+    # The shipped example must survive a round trip.
+    example = Path(__file__).resolve().parents[1] / "config.example.yaml"
+    if example.exists():
+        copy = tmp_path / "example.yaml"
+        copy.write_text(example.read_text())
+        set_in_remote(copy, "trust_loopback", "false")
+        assert yaml.safe_load(copy.read_text())["remote"]["trust_loopback"] is False

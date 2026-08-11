@@ -17,8 +17,8 @@ internet looks local, and the token is never asked for.
 
 The app now detects this: any request carrying a proxy header
 (`X-Forwarded-For`, `CF-Connecting-IP`, and similar) is refused the loopback
-shortcut and must present the token. Belt and braces, set this explicitly when
-you publish it:
+shortcut and must present the token. Belt and braces, turn the shortcut off
+entirely when you publish:
 
 ```yaml
 remote:
@@ -33,6 +33,10 @@ the code and strips it from the URL. In
 ```ini
 Environment=WALLDISPLAY_URL=http://127.0.0.1:8080/?token=YOUR_TOKEN
 ```
+
+`setup/harden-for-public.sh` does both of those and then verifies the result —
+step 5 below. Read this section anyway, so you know what it's protecting you
+from if it ever needs undoing.
 
 ## Don't rely on the access code alone
 
@@ -51,29 +55,59 @@ token decides *what may write to it*. Either alone is weaker than both.
 
 ## Setup
 
+Four scripts do the parts that can be scripted. The two dashboard steps (3 and
+4) can't be — they're clicks in Cloudflare's UI.
+
+| | Where you run it | What it does |
+|---|---|---|
+| `setup/deploy-tunnel-lxc.sh` | Proxmox host | Creates the connector's container |
+| `setup/install-tunnel.sh` | Inside that container | Installs and registers `cloudflared` |
+| `setup/harden-for-public.sh` | Calendar host | Closes the loopback hole |
+| `setup/verify-public-access.sh` | Anywhere outside your network | Checks what the internet can see |
+
+Run them in that order. `harden-for-public.sh` is the one that matters most —
+without it the tunnel publishes an app that never asks for the token.
+
 ### 1. A tunnel container on Proxmox
 
-Create a small LXC (Debian 12, 512 MB RAM, 4 GB disk is plenty), or install
-`cloudflared` directly in whichever VM/LXC runs the calendar.
+On the Proxmox host:
 
 ```bash
-curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
-  | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
-echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] \
-https://pkg.cloudflare.com/cloudflared bookworm main" \
-  | sudo tee /etc/apt/sources.list.d/cloudflared.list
-sudo apt update && sudo apt install cloudflared
+./setup/deploy-tunnel-lxc.sh
+```
+
+It runs the pre-flight checks first (storage pool, bridge, free CTID, Debian 12
+template), prints the plan, and shows you every `pct` command for approval
+before it runs — per the house rules in `CLAUDE.md`. It picks the first free
+CTID from 200 and refuses to reuse an existing one. Override anything with
+environment variables:
+
+```bash
+CTID=205 STORAGE=local-zfs BRIDGE=vmbr1 ./setup/deploy-tunnel-lxc.sh
 ```
 
 An unprivileged LXC is the right call here: the connector needs no special
-capabilities, and keeping it separate from the calendar means a problem in one
-isn't automatically a problem in the other.
+capabilities and no inbound ports (it dials out), and keeping it separate from
+the calendar means a problem in one isn't automatically a problem in the other.
+
+If you'd rather not have another container, `install-tunnel.sh` runs fine
+directly on the box that runs the calendar — skip this step.
 
 ### 2. Create the tunnel
 
 In the Cloudflare dashboard: **Zero Trust → Networks → Tunnels → Create a
-tunnel**, choose *Cloudflared*, name it, and it gives you a one-line install
-command with a token. Run that on the LXC and it registers itself as a service.
+tunnel**, choose *Cloudflared*, name it. It shows you an install command
+containing a long token starting `eyJ`. You want the token, not the command:
+
+```bash
+# From the calendar checkout, on the Proxmox host:
+pct push <CTID> setup/install-tunnel.sh /root/install-tunnel.sh
+pct exec <CTID> -- bash /root/install-tunnel.sh 'eyJ...'
+```
+
+That installs `cloudflared` from Cloudflare's own repository, registers the
+connector as a service, and confirms it came up. Re-running it with a different
+token repoints the connector — that's how you rotate one.
 
 Then add a **public hostname** on the tunnel:
 
@@ -121,25 +155,49 @@ login. Two options:
   `/api/import/message`. Simpler, but then that endpoint is protected by the
   wall-calendar token alone.
 
-### 5. Check it
+### 5. Harden the calendar host
 
-From a phone on mobile data, not your wifi:
+This is the step that closes the loopback hole described at the top. On the
+machine running the calendar:
+
+```bash
+sudo ./setup/harden-for-public.sh
+```
+
+It sets `remote.trust_loopback: false`, generates a `remote.token` if there
+isn't a usable one, repoints the kiosk at `?token=…` so the panel still works
+after, restarts the services, and then proves the fix by making the exact
+request a tunnel makes — loopback peer, `X-Forwarded-For` header — and failing
+loudly if that doesn't come back `401`. It prints the access code at the end;
+that's what the remote page, the Shortcut, and the panel all need.
+
+Config edits are made in place and keep their comments, so the file stays
+readable afterwards.
+
+### 6. Check it from outside
+
+From a phone on mobile data, or anywhere that isn't your own network:
+
+```bash
+./setup/verify-public-access.sh calendar.yourdomain.com <ACCESS_CODE>
+```
+
+It checks the hostname resolves over HTTPS, that an **unauthenticated request
+does not return your calendar**, whether Access is actually challenging, that
+the code still works through the tunnel, and that the security headers survived
+the proxy. Exit code is non-zero if anything is exposed.
+
+Running it from inside the house proves nothing — you may be reaching the app
+directly, not through Cloudflare.
+
+By eye, the same check:
 
 ```
 https://calendar.yourdomain.com/remote
 ```
 
-You should get the Cloudflare login, then the access-code gate, then the page.
-
-Verify the tunnel didn't reopen the loopback hole:
-
-```bash
-# From another machine, without a token -- must be 401, not 200
-curl -s -o /dev/null -w '%{http_code}\n' https://calendar.yourdomain.com/api/status
-```
-
-A `200` there means something is wrong — check `trust_loopback: false` is set
-and the service was restarted.
+Cloudflare login, then the access-code gate, then the page. If you get the page
+without either, stop and re-run step 5.
 
 ## The honest comparison
 

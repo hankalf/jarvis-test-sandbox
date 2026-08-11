@@ -252,7 +252,18 @@ Two ways to reach it from outside the house, neither involving a port forward:
 
 If you publish it publicly, read the first section of that second document:
 a tunnel connector talks to the app from 127.0.0.1, and the panel trusts
-127.0.0.1, so `remote.trust_loopback: false` is not optional there.
+127.0.0.1, so `remote.trust_loopback: false` is not optional there. Four
+scripts do the setup:
+
+```bash
+./setup/deploy-tunnel-lxc.sh                      # Proxmox host: connector container
+./setup/install-tunnel.sh <TUNNEL_TOKEN>          # in that container: cloudflared
+sudo ./setup/harden-for-public.sh                 # calendar host: closes the loopback hole
+./setup/verify-public-access.sh calendar.example.com <CODE>   # from outside your network
+```
+
+Run the third one before you publish the hostname, and the fourth from a phone
+on mobile data — it's the only check that sees what the internet sees.
 
 ## Security
 
