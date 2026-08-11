@@ -31,6 +31,7 @@ from . import photos as photo_lib
 from .auth import TokenGuard, token_warnings
 from .calendars import CalendarFeeds
 from .config import Config
+from . import occasions
 from .importer import ImporterManager
 from .presence import PresenceManager
 from .state import DisplayController
@@ -90,6 +91,14 @@ class NewEvent(BaseModel):
 
 class ModeRequest(BaseModel):
     mode: str
+
+
+class PhotoCaption(BaseModel):
+    caption: str | None = Field(default=None, max_length=200)
+
+
+class DoseMark(BaseModel):
+    taken: bool = True
 
 
 class ImportMessage(BaseModel):
@@ -373,6 +382,30 @@ async def delete_photo(name: str):
     return {"status": "deleted"}
 
 
+@app.patch("/api/photos/{name}", dependencies=[Depends(require_remote)])
+async def caption_photo(name: str, payload: PhotoCaption):
+    """A caption turns the frame from wallpaper into recognition support --
+    "Margaret's graduation, June 2019" under the picture."""
+    target = photo_lib.resolve_in(app.state.config.photo_dir, name)
+    if target is None or not target.is_file():
+        raise HTTPException(status_code=404, detail="no such photo")
+    if not photo_lib.set_caption(app.state.config.photo_dir, name, payload.caption):
+        raise HTTPException(status_code=500, detail="could not save the caption")
+    app.state.controller.broadcast({"type": "photos-changed"})
+    return {"status": "ok", "caption": (payload.caption or "").strip()[:200]}
+
+
+@app.post("/api/medications/{dose_id}", dependencies=[Depends(require_write)])
+async def mark_dose(dose_id: str, payload: DoseMark):
+    """Tick a dose off. Idempotent -- the id encodes med, date, and time, so a
+    double tap on a touch screen can't double-record anything."""
+    if "|" not in dose_id:
+        raise HTTPException(status_code=400, detail="malformed dose id")
+    taken_at = app.state.store.mark_dose(dose_id, payload.taken)
+    app.state.controller.broadcast({"type": "events-changed"})
+    return {"status": "ok", "doseId": dose_id, "takenAt": taken_at}
+
+
 @app.get("/api/status", dependencies=[Depends(require_remote)])
 async def status(request: Request):
     """Everything the caregiver page needs to answer 'is it working?'."""
@@ -398,6 +431,11 @@ async def status(request: Request):
         "diskFreeBytes": _disk_free(config.photo_dir),
         "upcoming": upcoming,
         "importer": app.state.importer.describe(),
+        "medications": (
+            occasions.adherence_today(config.medications, config.timezone,
+                                      app.state.store.doses_taken())
+            if config.medications else None
+        ),
         "warnings": token_warnings(config),
     }
 
@@ -410,8 +448,25 @@ def _disk_free(path: Path) -> int | None:
 
 
 def _merged_events(start: datetime, end: datetime) -> list[dict]:
+    """Feed events + locally stored events + the ones we generate (birthdays,
+    medication doses). Everything downstream sees one flat list."""
+    config: Config = app.state.config
+    store: Store = app.state.store
+    tz = config.timezone
+
     events = app.state.feeds.events_between(start, end)
-    events.extend(app.state.store.events_between(start, end))
+    events.extend(store.events_between(start, end))
+    events.extend(occasions.birthday_events(config.birthdays, start, end, tz))
+
+    if config.medications:
+        days = [
+            (start.date() + timedelta(days=n)).isoformat()
+            for n in range((end.date() - start.date()).days + 1)
+        ][:400]
+        events.extend(occasions.medication_events(
+            config.medications, start, end, tz, store.doses_taken(days)
+        ))
+
     events.sort(key=lambda e: (e["start"], e["title"]))
     return events
 

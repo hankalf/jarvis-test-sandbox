@@ -23,7 +23,16 @@ DEFAULTS: dict[str, Any] = {
         "week_starts_on": "sunday",
         "agenda_days": 14,
         "quiet_hours": {"enabled": False, "start": "23:00", "end": "06:30"},
+        # Full-screen "time to get ready" card before appointments that have a
+        # location. The chime is off by default -- an unexpected sound from a
+        # wall is startling in a way a changed picture is not.
+        "leaving_soon": {"enabled": True, "minutes_before": 30, "chime": False},
     },
+    # [{name: Margaret, date: 1954-03-12, note: "Call her!"}]
+    # date can be YYYY-MM-DD (shows the age) or MM-DD.
+    "birthdays": [],
+    # [{name: "Morning pills", times: ["08:00"], notes: "With food"}]
+    "medications": [],
     "presence": {
         "backend": "http",
         "hold_seconds": 20,
@@ -143,6 +152,14 @@ class Config:
         return self._data["remote"]
 
     @property
+    def birthdays(self) -> list[dict]:
+        return self._data.get("birthdays") or []
+
+    @property
+    def medications(self) -> list[dict]:
+        return self._data.get("medications") or []
+
+    @property
     def importer(self) -> dict:
         out = dict(self._data["importer"])
         out["_log_path"] = str(self.data_dir / "import-log.jsonl")
@@ -184,4 +201,10 @@ class Config:
             "reduceMotion": bool(a["reduce_motion"]),
             "showWeekdayBanner": bool(a["show_weekday_banner"]),
             "deviceName": self.remote["device_name"],
+            "leavingSoon": {
+                "enabled": bool(d["leaving_soon"]["enabled"]),
+                "minutesBefore": int(d["leaving_soon"]["minutes_before"]),
+                "chime": bool(d["leaving_soon"]["chime"]),
+            },
+            "hasMedications": bool(self.medications),
         }

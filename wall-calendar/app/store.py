@@ -35,6 +35,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_local_events_source_ref
     ON local_events(source_ref) WHERE source_ref IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_local_events_start ON local_events(start);
+
+-- Medication doses are synthesised from config, so only the part that can't
+-- be derived is stored: that someone ticked one off. id is
+-- "<med-slug>|<date>|<HH:MM>", which makes re-ticking idempotent.
+CREATE TABLE IF NOT EXISTS med_doses (
+    id          TEXT PRIMARY KEY,
+    taken_at    TEXT NOT NULL
+);
 """
 
 
@@ -129,6 +137,46 @@ class Store:
         )
         self._conn.commit()
         return cur.rowcount > 0
+
+    # --- medication doses -------------------------------------------------
+
+    def mark_dose(self, dose_id: str, taken: bool) -> str | None:
+        """Tick or untick a dose. Returns the timestamp, or None if unticked."""
+        if not taken:
+            self._conn.execute("DELETE FROM med_doses WHERE id = ?", (dose_id,))
+            self._conn.commit()
+            return None
+        stamp = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            "INSERT INTO med_doses (id, taken_at) VALUES (?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET taken_at = excluded.taken_at",
+            (dose_id, stamp),
+        )
+        self._conn.commit()
+        return stamp
+
+    def doses_taken(self, id_prefix_dates: list[str] | None = None) -> dict[str, str]:
+        """All ticked doses, or only those whose id contains one of the given
+        date strings -- ids embed the date, so a LIKE per day is enough."""
+        if id_prefix_dates is None:
+            rows = self._conn.execute("SELECT id, taken_at FROM med_doses").fetchall()
+            return {r["id"]: r["taken_at"] for r in rows}
+        out: dict[str, str] = {}
+        for day in id_prefix_dates:
+            rows = self._conn.execute(
+                "SELECT id, taken_at FROM med_doses WHERE id LIKE ?", (f"%|{day}|%",)
+            ).fetchall()
+            out.update({r["id"]: r["taken_at"] for r in rows})
+        return out
+
+    def prune_doses(self, before: str) -> int:
+        """Drop tick records older than a date string, so the table stays small
+        on a device that runs for years."""
+        cur = self._conn.execute(
+            "DELETE FROM med_doses WHERE substr(id, instr(id, '|') + 1, 10) < ?", (before,)
+        )
+        self._conn.commit()
+        return cur.rowcount
 
     def events_between(self, start: datetime, end: datetime) -> list[dict]:
         """Events overlapping [start, end). Compared as ISO strings, which sort

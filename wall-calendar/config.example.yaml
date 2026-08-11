@@ -41,6 +41,16 @@ display:
     enabled: false
     start: "23:00"
     end: "06:30"
+  # Shortly before an appointment with somewhere to be -- or a medication dose
+  # -- the whole screen becomes that one thing, over the photos or whatever
+  # else was showing. Only one at a time, and it can be dismissed by touch.
+  leaving_soon:
+    enabled: true
+    minutes_before: 30
+    # A soft two-note tone when the card appears. Off by default: an
+    # unexpected sound from a wall is startling in a way a changed picture
+    # isn't, and it can't be silenced from across the room.
+    chime: false
 
 # How the panel reads for the person standing in front of it. The defaults are
 # tuned for an older viewer at a few feet: light theme, large type, plain words.
@@ -78,6 +88,23 @@ remote:
   # photo is ~4000px; a wall panel is 1080-1440px, so this saves a lot of work
   # on every slideshow tick.
   resize_long_edge: 2560
+
+# Birthdays. Shown as an all-day event on the day, every year, with the age
+# worked out if you give a full year. Use MM-DD to show the name without an age.
+birthdays: []
+#  - {name: Margaret, date: "1954-03-12"}
+#  - {name: Tom, date: "06-04", note: "Ring him in the morning"}
+
+# Medication. Each entry becomes one event per listed time, every day, with a
+# big "Mark as taken" button on the panel. The remote page shows how many of
+# today's doses have been ticked off and flags any that are past their time.
+#
+# This is a memory aid, not a medical device: nothing here alarms, escalates,
+# or tells anyone a dose was missed. Treat an untouched tick as "nobody pressed
+# the button", which is not the same as "the medicine wasn't taken".
+medications: []
+#  - {name: "Morning pills", times: ["08:00"], notes: "With food"}
+#  - {name: "Blood pressure tablet", times: ["08:00", "20:00"]}
 
 # Phase 2: pulling appointments out of email and forwarded texts.
 # Read docs/phase2-appointment-import.md before enabling. Everything imported

@@ -9,6 +9,7 @@ sideways on the wall.
 from __future__ import annotations
 
 import io
+import json
 import logging
 import re
 import unicodedata
@@ -60,9 +61,52 @@ def resolve_in(directory: Path, name: str) -> Path | None:
     return candidate
 
 
+CAPTIONS_FILE = ".captions.json"
+
+
+def _captions_path(directory: Path) -> Path:
+    return directory / CAPTIONS_FILE
+
+
+def read_captions(directory: Path) -> dict[str, str]:
+    """Captions live in a JSON sidecar rather than the database: they belong to
+    the photos, so copying the folder somewhere takes them along."""
+    path = _captions_path(directory)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+    except (OSError, ValueError) as exc:
+        log.warning("could not read captions: %s", exc)
+        return {}
+
+
+def set_caption(directory: Path, name: str, caption: str | None) -> bool:
+    if resolve_in(directory, name) is None:
+        return False
+    captions = read_captions(directory)
+    key = Path(name).name
+    text = (caption or "").strip()[:200]
+    if text:
+        captions[key] = text
+    else:
+        captions.pop(key, None)
+    try:
+        path = _captions_path(directory)
+        temp = path.with_suffix(".tmp")
+        temp.write_text(json.dumps(captions, indent=1, ensure_ascii=False))
+        temp.replace(path)
+    except OSError as exc:
+        log.warning("could not write captions: %s", exc)
+        return False
+    return True
+
+
 def list_photos(directory: Path) -> list[dict]:
     if not directory.exists():
         return []
+    captions = read_captions(directory)
     out = []
     for path in sorted(directory.iterdir()):
         if not path.is_file() or path.suffix.lower() not in DISPLAY_SUFFIXES:
@@ -72,6 +116,7 @@ def list_photos(directory: Path) -> list[dict]:
             {
                 "name": path.name,
                 "url": f"/photos/{path.name}",
+                "caption": captions.get(path.name, ""),
                 "sizeBytes": stat.st_size,
                 "addedAt": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
             }
@@ -145,4 +190,5 @@ def delete_photo(directory: Path, name: str) -> bool:
     if path.suffix.lower() not in DISPLAY_SUFFIXES:
         return False
     path.unlink()
+    set_caption(directory, name, None)  # don't leave the caption orphaned
     return True

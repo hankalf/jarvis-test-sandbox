@@ -261,7 +261,9 @@ async function loadEvents(force = false) {
 
 async function loadPhotos() {
   const data = await api("/api/photos");
-  state.photos = shuffle(data.photos);
+  // Items carry captions; fall back to the bare URL list for safety.
+  const items = data.items || (data.photos || []).map((url) => ({ url, caption: "" }));
+  state.photos = shuffle(items);
   el("photo-empty").hidden = state.photos.length > 0;
 }
 
@@ -295,6 +297,7 @@ function connect() {
     } else if (message.type === "events-changed") {
       await loadEvents(true);
       render();
+      updateAlert();
     } else if (message.type === "photos-changed") {
       await loadPhotos();
     }
@@ -368,7 +371,9 @@ function showNextPhoto() {
     outgoing.classList.remove("is-shown");
     photoSlot = 1 - photoSlot;
   };
-  incoming.src = state.photos[photoIndex % state.photos.length];
+  const item = state.photos[photoIndex % state.photos.length];
+  incoming.src = item.url;
+  el("photo-caption").textContent = item.caption || "";
   photoIndex++;
   if (photoIndex % state.photos.length === 0) state.photos = shuffle(state.photos);
 }
@@ -585,6 +590,8 @@ function buildHero(ev, isRunning, isTomorrow) {
     flag.textContent = "Needs confirming — tap to review";
     hero.appendChild(flag);
   }
+  if (ev.kind === "medication") hero.appendChild(medButton(ev));
+  if (ev.kind === "birthday") hero.classList.add("is-birthday");
 
   hero.style.setProperty("--row-color", ev.color);
   hero.addEventListener("click", () => openDetail(ev));
@@ -613,8 +620,10 @@ function bigRow(ev) {
   const row = document.createElement("button");
   row.className = "big-row";
   row.style.setProperty("--row-color", ev.color);
-  if (isPast(ev)) row.classList.add("is-past");
+  if (isPast(ev) && !ev.takenAt) row.classList.add("is-past");
   if (!ev.confirmed) row.classList.add("is-unconfirmed");
+  if (ev.kind === "birthday") row.classList.add("is-birthday");
+  if (ev.takenAt) row.classList.add("is-taken");
 
   const when = document.createElement("div");
   when.className = "big-when";
@@ -637,10 +646,39 @@ function bigRow(ev) {
     flag.textContent = "Needs confirming";
     body.appendChild(flag);
   }
+  if (ev.kind === "medication") body.appendChild(medButton(ev));
 
   row.append(when, body);
   row.addEventListener("click", () => openDetail(ev));
   return row;
+}
+
+/** Tick-off button for a medication dose. Big, and says what it means -- the
+ *  whole feature is worthless if it is ambiguous whether it was pressed. */
+function medButton(ev) {
+  const button = document.createElement("button");
+  button.className = "med-take" + (ev.takenAt ? " is-taken" : "");
+  button.textContent = ev.takenAt ? "✓ Taken" : "Mark as taken";
+  button.style.setProperty("--row-color", ev.color);
+  button.addEventListener("click", async (e) => {
+    // Don't also open the detail sheet for the row underneath.
+    e.stopPropagation();
+    await setDoseTaken(ev, !ev.takenAt);
+  });
+  return button;
+}
+
+async function setDoseTaken(ev, taken) {
+  try {
+    await api(`/api/medications/${encodeURIComponent(ev.doseId)}`, {
+      method: "POST",
+      body: JSON.stringify({ taken }),
+    });
+    ev.takenAt = taken ? new Date().toISOString() : null;
+    render();
+  } catch (err) {
+    console.warn("could not record dose", err);
+  }
 }
 
 function renderTodayView() {
@@ -964,6 +1002,9 @@ function openDetail(ev) {
     line("Where", ev.location);
     line("Notes", ev.notes);
     line("Source", ev.source === "feed" ? "Synced calendar" : ev.source);
+    if (ev.kind === "medication") {
+      line("Taken", ev.takenAt ? `Yes, at ${fmtTime(new Date(ev.takenAt))}` : "Not yet");
+    }
     sheet.appendChild(list);
 
     const actions = document.createElement("div");
@@ -1099,6 +1140,96 @@ function openAddForm() {
   });
 }
 
+// ------------------------------------------------- time to get ready alert
+
+/* The panel normally *shows* the future. This makes it *prompt*: shortly
+ * before something that needs leaving the house for -- or a dose that's due --
+ * the whole screen becomes that one thing. Deliberately conservative: only
+ * events with somewhere to be, one alert at a time, dismissable, and silent
+ * unless a chime is switched on in config. */
+
+const dismissedAlerts = new Set();
+let currentAlertId = null;
+
+function alertCandidate() {
+  const settings = state.settings?.leavingSoon;
+  if (!settings?.enabled) return null;
+
+  const now = new Date();
+  const horizon = new Date(now.getTime() + settings.minutesBefore * 60000);
+
+  return state.events
+    .filter((ev) => {
+      if (ev.allDay || dismissedAlerts.has(ev.id)) return false;
+      if (ev.takenAt) return false;                       // dose already ticked
+      const start = new Date(ev.start);
+      if (start <= now || start > horizon) return false;
+      // Worth interrupting for: somewhere to be, or medicine to take.
+      return Boolean(ev.location) || ev.kind === "medication";
+    })
+    .sort((a, b) => a.start.localeCompare(b.start))[0] || null;
+}
+
+function updateAlert() {
+  const ev = alertCandidate();
+  const layer = el("alert-layer");
+
+  if (ev === null) {
+    layer.hidden = true;
+    currentAlertId = null;
+    return;
+  }
+
+  const isMedication = ev.kind === "medication";
+  el("alert-label").textContent = isMedication ? "Time for your medicine" : "Time to get ready";
+  el("alert-when").textContent = `${fmtTime(new Date(ev.start))} — ${humanUntil(new Date(ev.start))}`;
+  el("alert-title").textContent = ev.title;
+  el("alert-where").textContent = ev.location || ev.notes || "";
+  el("alert-dismiss").textContent = isMedication ? "I've taken it" : "OK, got it";
+
+  if (ev.id !== currentAlertId) {
+    currentAlertId = ev.id;
+    layer.hidden = false;
+    if (state.settings.leavingSoon.chime) chime();
+  }
+}
+
+/** A soft two-note tone via Web Audio -- no file to ship or fail to load.
+ *  Quiet and slow on purpose: a wall that suddenly beeps is startling. */
+function chime() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const gain = ctx.createGain();
+    gain.connect(ctx.destination);
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.15, ctx.currentTime + 0.08);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 1.4);
+    for (const [frequency, at] of [[587.33, 0], [880, 0.28]]) {
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = frequency;
+      osc.connect(gain);
+      osc.start(ctx.currentTime + at);
+      osc.stop(ctx.currentTime + at + 1.1);
+    }
+    setTimeout(() => ctx.close(), 2500);
+  } catch (err) {
+    console.warn("chime unavailable", err);
+  }
+}
+
+async function dismissAlert() {
+  const ev = state.events.find((e) => e.id === currentAlertId);
+  if (ev && ev.kind === "medication") {
+    await setDoseTaken(ev, true);  // "I've taken it" should actually record it
+  } else if (ev) {
+    dismissedAlerts.add(ev.id);
+  }
+  el("alert-layer").hidden = true;
+  currentAlertId = null;
+  pingPresence("alert-dismissed");
+}
+
 // ------------------------------------------------------------------- wiring
 
 function syncViewButtons() {
@@ -1139,6 +1270,7 @@ function wireEvents() {
   el("btn-add").addEventListener("click", openAddForm);
   el("btn-photos").addEventListener("click", () => { closeSheet(); requestMode("photos"); });
   el("scrim").addEventListener("click", closeSheet);
+  el("alert-dismiss").addEventListener("click", dismissAlert);
 
   // Any touch counts as presence. In photo mode it also wakes the calendar --
   // and that first tap must not also press whatever ends up under the finger.
@@ -1150,6 +1282,11 @@ function wireEvents() {
     (event) => {
       pingPresence("touch");
       if (state.mode === "calendar") return;
+      // The get-ready card is a full-screen surface with one button on it, so
+      // there is nothing to press by accident and no reason to swallow the
+      // tap. Guarding it would make the button dead exactly when the card
+      // matters most -- it usually appears over the photo frame.
+      if (!el("alert-layer").hidden) return;
       wakeGuardUntil = Date.now() + 700;
       event.preventDefault();
       event.stopPropagation();
@@ -1193,9 +1330,11 @@ async function init() {
   showNextPhoto();
   connect();
 
+  updateAlert();
   setInterval(() => {
     renderClock();
     renderPhotoOverlay();
+    updateAlert();
   }, 10000);
 
   // Re-render so "now" markers and past-event dimming stay honest.

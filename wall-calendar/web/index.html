@@ -24,6 +24,7 @@
     <div class="photo-date" id="photo-date"></div>
     <div class="photo-next" id="photo-next"></div>
   </div>
+  <div class="photo-caption" id="photo-caption"></div>
   <div class="photo-empty" id="photo-empty" hidden>
     <p>No photos yet.</p>
     <p class="muted">Drop images into the <code>photos/</code> folder.</p>
@@ -60,6 +61,18 @@
     <div class="legend" id="legend"></div>
     <div class="status" id="status"></div>
   </footer>
+</section>
+
+<!-- "Time to get ready": takes over the whole screen before an appointment
+     that has somewhere to be. Supersedes both layers above. -->
+<section class="alert-layer" id="alert-layer" aria-live="polite" hidden>
+  <div class="alert-inner">
+    <div class="alert-label" id="alert-label">Time to get ready</div>
+    <div class="alert-when" id="alert-when"></div>
+    <div class="alert-title" id="alert-title"></div>
+    <div class="alert-where" id="alert-where"></div>
+    <button class="alert-dismiss" id="alert-dismiss">OK, got it</button>
+  </div>
 </section>
 
 <!-- Slide-up sheet used for both event details and the add form. -->

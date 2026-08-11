@@ -20,6 +20,7 @@ from app.state import DisplayController  # noqa: E402
 from app.presence import PresenceManager  # noqa: E402
 from app.store import Store  # noqa: E402
 from app import photos  # noqa: E402
+from app import occasions  # noqa: E402
 
 TZ = ZoneInfo("America/New_York")
 
@@ -668,6 +669,213 @@ def test_importer_disabled_and_unavailable_report_clearly(client, importer_clien
     response = icli.post("/api/import/message", json={"text": "hi"})
     assert response.status_code == 503
     assert "API key" in response.json()["detail"]
+
+
+# --- birthdays -----------------------------------------------------------
+
+
+def test_birthdays_recur_every_year_and_show_the_age():
+    events = occasions.birthday_events(
+        [{"name": "Margaret", "date": "1954-03-12"}],
+        datetime(2026, 3, 1, tzinfo=TZ), datetime(2028, 4, 1, tzinfo=TZ), TZ,
+    )
+    assert [e["title"] for e in events] == ["Margaret turns 72", "Margaret turns 73"]
+    assert all(e["allDay"] and e["kind"] == "birthday" and not e["editable"] for e in events)
+    assert events[0]["start"].startswith("2026-03-12T00:00:00")
+
+
+def test_birthday_without_a_year_omits_the_age():
+    events = occasions.birthday_events(
+        [{"name": "Tom", "date": "06-04"}],
+        datetime(2026, 6, 1, tzinfo=TZ), datetime(2026, 6, 30, tzinfo=TZ), TZ,
+    )
+    assert [e["title"] for e in events] == ["Tom's birthday"]
+
+
+def test_leap_day_birthday_falls_back_to_the_28th():
+    span = (datetime(2027, 2, 1, tzinfo=TZ), datetime(2027, 3, 1, tzinfo=TZ))  # not a leap year
+    events = occasions.birthday_events([{"name": "Ada", "date": "1996-02-29"}], *span, TZ)
+    assert len(events) == 1 and events[0]["start"].startswith("2027-02-28")
+
+    leap = (datetime(2028, 2, 1, tzinfo=TZ), datetime(2028, 3, 1, tzinfo=TZ))
+    events = occasions.birthday_events([{"name": "Ada", "date": "1996-02-29"}], *leap, TZ)
+    assert len(events) == 1 and events[0]["start"].startswith("2028-02-29")
+
+
+def test_malformed_birthday_entries_are_skipped_not_fatal():
+    events = occasions.birthday_events(
+        [{"name": "No date"}, {"date": "1950-01-01"}, {"name": "Ok", "date": "1950-01-01"}],
+        datetime(2026, 1, 1, tzinfo=TZ), datetime(2026, 1, 5, tzinfo=TZ), TZ,
+    )
+    assert [e["title"] for e in events] == ["Ok turns 76"]
+
+
+def test_birthdays_appear_in_the_calendar(tmp_path: Path, monkeypatch):
+    config_file = tmp_path / "config.yaml"
+    # Anchored a week out so it lands inside the queried window whenever the
+    # suite happens to run.
+    soon = (datetime.now(TZ) + timedelta(days=7)).date()
+    config_file.write_text(
+        "timezone: America/New_York\ncalendars: []\ndata_dir: data\n"
+        "display:\n  photo_dir: photos\n"
+        f"birthdays:\n  - {{name: Margaret, date: '1954-{soon.month:02d}-{soon.day:02d}'}}\n"
+    )
+    monkeypatch.setenv("WALLDISPLAY_CONFIG", str(config_file))
+    for module in [m for m in list(sys.modules) if m.startswith("app.")]:
+        del sys.modules[module]
+    from app.main import app
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        events = client.get("/api/events?days=180&back=30").json()["events"]
+        assert any(e["kind"] == "birthday" and "Margaret" in e["title"] for e in events)
+
+
+# --- medication -----------------------------------------------------------
+
+
+MEDS = [{"name": "Morning pills", "times": ["08:00", "19:00"], "notes": "With food"}]
+
+
+def test_medication_doses_are_generated_per_day():
+    doses = occasions.medication_events(
+        MEDS, datetime(2026, 8, 10, tzinfo=TZ), datetime(2026, 8, 13, tzinfo=TZ), TZ
+    )
+    assert len(doses) == 6  # two a day for three days
+    assert doses[0]["doseId"] == "morning-pills|2026-08-10|08:00"
+    assert all(d["kind"] == "medication" and d["takenAt"] is None for d in doses)
+    assert doses[0]["notes"] == "With food"
+
+
+def test_marking_a_dose_is_idempotent_and_reversible(tmp_path: Path):
+    store = Store(tmp_path / "test.db")
+    dose_id = "morning-pills|2026-08-10|08:00"
+
+    first = store.mark_dose(dose_id, True)
+    second = store.mark_dose(dose_id, True)   # double tap on a touch screen
+    assert first is not None and second is not None
+    assert list(store.doses_taken()) == [dose_id], "must not record two doses"
+
+    assert store.mark_dose(dose_id, False) is None
+    assert store.doses_taken() == {}
+    store.close()
+
+
+def test_taken_state_reaches_the_generated_dose(tmp_path: Path):
+    store = Store(tmp_path / "test.db")
+    store.mark_dose("morning-pills|2026-08-10|08:00", True)
+    doses = occasions.medication_events(
+        MEDS, datetime(2026, 8, 10, tzinfo=TZ), datetime(2026, 8, 11, tzinfo=TZ), TZ,
+        store.doses_taken(["2026-08-10"]),
+    )
+    by_time = {d["start"][11:16]: d for d in doses}
+    assert by_time["08:00"]["takenAt"] is not None
+    assert by_time["19:00"]["takenAt"] is None
+    store.close()
+
+
+def test_adherence_counts_only_doses_already_due(tmp_path: Path):
+    store = Store(tmp_path / "test.db")
+    # Two doses: one at the start of the day (due), one at the very end (not).
+    meds = [{"name": "Pills", "times": ["00:01", "23:59"]}]
+    summary = occasions.adherence_today(meds, TZ, store.doses_taken())
+    assert summary["total"] == 2
+    assert summary["taken"] == 0
+    assert summary["missed"] == 1, "the 23:59 dose is not late yet"
+    store.close()
+
+
+def test_dose_can_be_ticked_over_the_api(tmp_path: Path, monkeypatch):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "timezone: America/New_York\ncalendars: []\ndata_dir: data\n"
+        "display:\n  photo_dir: photos\n"
+        "medications:\n  - {name: Morning pills, times: ['08:00']}\n"
+    )
+    monkeypatch.setenv("WALLDISPLAY_CONFIG", str(config_file))
+    for module in [m for m in list(sys.modules) if m.startswith("app.")]:
+        del sys.modules[module]
+    from app.main import app
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        doses = [e for e in client.get("/api/events?days=2").json()["events"]
+                 if e["kind"] == "medication"]
+        assert doses, "medication doses should appear in the calendar"
+        dose_id = doses[0]["doseId"]
+
+        marked = client.post(f"/api/medications/{dose_id}", json={"taken": True})
+        assert marked.status_code == 200 and marked.json()["takenAt"]
+
+        again = [e for e in client.get("/api/events?days=2").json()["events"]
+                 if e.get("doseId") == dose_id][0]
+        assert again["takenAt"] is not None
+
+        assert client.get("/api/status").json()["medications"]["total"] >= 1
+        assert client.post("/api/medications/nonsense", json={"taken": True}).status_code == 400
+
+
+# --- photo captions -------------------------------------------------------
+
+
+def test_captions_round_trip_and_survive_deletion(tmp_path: Path):
+    photo_dir = tmp_path / "photos"
+    saved = photos.save_upload(photo_dir, "beach.png", _png_bytes())
+    name = saved["name"]
+
+    assert photos.set_caption(photo_dir, name, "  Margaret's graduation, June  ")
+    assert photos.list_photos(photo_dir)[0]["caption"] == "Margaret's graduation, June"
+
+    # Clearing removes the entry rather than storing an empty string.
+    photos.set_caption(photo_dir, name, "")
+    assert photos.read_captions(photo_dir) == {}
+
+    photos.set_caption(photo_dir, name, "Back again")
+    photos.delete_photo(photo_dir, name)
+    assert photos.read_captions(photo_dir) == {}, "caption should not outlive its photo"
+
+
+def test_caption_sidecar_is_not_listed_as_a_photo(tmp_path: Path):
+    photo_dir = tmp_path / "photos"
+    photos.save_upload(photo_dir, "a.png", _png_bytes())
+    photos.set_caption(photo_dir, "a.jpg", "hello")
+    assert [p["name"] for p in photos.list_photos(photo_dir)] == ["a.jpg"]
+
+
+def test_unreadable_caption_file_does_not_break_listing(tmp_path: Path):
+    photo_dir = tmp_path / "photos"
+    photos.save_upload(photo_dir, "a.png", _png_bytes())
+    (photo_dir / photos.CAPTIONS_FILE).write_text("{ this is not json")
+    listed = photos.list_photos(photo_dir)
+    assert len(listed) == 1 and listed[0]["caption"] == ""
+
+
+def test_caption_endpoint(secured_client):
+    headers = {"X-Wall-Token": "s3cret-token-value-long"}
+    name = secured_client.post(
+        "/api/photos", headers=headers,
+        files=[("files", ("trip.png", _png_bytes(), "image/png"))],
+    ).json()["added"][0]
+
+    assert secured_client.patch(
+        f"/api/photos/{name}", headers=headers, json={"caption": "Sunday at the lake"}
+    ).status_code == 200
+    assert secured_client.get("/api/photos").json()["items"][0]["caption"] == "Sunday at the lake"
+
+    assert secured_client.patch(
+        "/api/photos/ghost.jpg", headers=headers, json={"caption": "x"}
+    ).status_code == 404
+    # Unauthenticated writes are still refused.
+    assert secured_client.patch(f"/api/photos/{name}", json={"caption": "x"}).status_code == 401
+
+
+def test_leaving_soon_settings_reach_the_browser(tmp_path: Path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "display:\n  leaving_soon: {enabled: true, minutes_before: 45, chime: true}\n"
+    )
+    settings = Config.load(config_file).client_settings()
+    assert settings["leavingSoon"] == {"enabled": True, "minutesBefore": 45, "chime": True}
+    # Chime stays off unless asked for.
+    assert Config.load(tmp_path / "missing.yaml").client_settings()["leavingSoon"]["chime"] is False
 
 
 def test_manifest_and_icons_are_served(client):

@@ -96,6 +96,7 @@ async function refreshStatus() {
     ["Running for", fmtUptime(status.uptimeSeconds), ""],
   ]);
 
+  renderMedications(status.medications);
   renderWarnings([
     ...status.warnings,
     ...status.feeds
@@ -103,6 +104,33 @@ async function refreshStatus() {
       .map((f) => `Calendar "${f.name}" isn't syncing: ${f.error}`),
   ]);
   renderUpcoming(status.upcoming);
+}
+
+function renderMedications(meds) {
+  const card = el("medication-card");
+  if (!meds) {                       // none configured; hide the whole card
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+  el("med-summary").textContent =
+    `${meds.taken} of ${meds.total} taken today`;
+
+  const flag = el("med-missed");
+  if (meds.missed > 0) {
+    flag.hidden = false;
+    flag.textContent = meds.missed === 1
+      ? "1 dose is past its time and not ticked off"
+      : `${meds.missed} doses are past their time and not ticked off`;
+  } else {
+    flag.hidden = true;
+  }
+
+  el("med-next").textContent = meds.next
+    ? `Next dose at ${new Intl.DateTimeFormat("en-US", {
+        timeZone: timezone, hour: "numeric", minute: "2-digit",
+      }).format(new Date(meds.next))}`
+    : (meds.total ? "Nothing more due today." : "");
 }
 
 function renderStats(rows) {
@@ -172,21 +200,45 @@ async function refreshPhotos() {
   const grid = el("photo-grid");
   grid.innerHTML = "";
   for (const photo of items) {
-    const cell = document.createElement("div");
-    cell.className = "thumb";
+    const cell = document.createElement("figure");
+    cell.className = "thumb-cell";
+
+    const frame = document.createElement("div");
+    frame.className = "thumb";
     const img = document.createElement("img");
     img.src = photo.url;
-    img.alt = photo.name;
+    img.alt = photo.caption || photo.name;
     img.loading = "lazy";
     const remove = document.createElement("button");
     remove.textContent = "×";
     remove.title = `Remove ${photo.name}`;
     remove.addEventListener("click", async () => {
-      if (!confirm(`Remove this photo from the display?`)) return;
+      if (!confirm("Remove this photo from the display?")) return;
       await guard(() => api(`/api/photos/${encodeURIComponent(photo.name)}`, { method: "DELETE" }));
       await guard(refreshPhotos);
     });
-    cell.append(img, remove);
+    frame.append(img, remove);
+
+    // A caption turns the frame into something that prompts recognition
+    // rather than just decorating the wall, so make it easy to add.
+    const caption = document.createElement("input");
+    caption.className = "thumb-caption";
+    caption.value = photo.caption || "";
+    caption.placeholder = "Add a caption…";
+    caption.maxLength = 200;
+    caption.addEventListener("change", async () => {
+      const saved = await guard(() =>
+        api(`/api/photos/${encodeURIComponent(photo.name)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ caption: caption.value }),
+        }));
+      if (saved) {
+        caption.classList.add("is-saved");
+        setTimeout(() => caption.classList.remove("is-saved"), 1200);
+      }
+    });
+
+    cell.append(frame, caption);
     grid.appendChild(cell);
   }
 }

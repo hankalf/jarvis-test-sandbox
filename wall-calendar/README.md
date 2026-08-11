@@ -49,6 +49,13 @@ The defaults are not a typical dashboard, on purpose:
   photos, add an appointment, all from a phone.
 - **Keeps working offline** — the last good copy of each calendar is saved to
   disk, so a power cut plus a dead router doesn't leave a blank wall.
+- **Photo captions** — "Margaret's graduation, June 2019" beside the clock,
+  which turns the frame from wallpaper into something that prompts a memory.
+- **Time to get ready** — shortly before an appointment with somewhere to be,
+  the whole screen becomes that one thing.
+- **Medication reminders** — doses appear with a big *Mark as taken* button;
+  family can see from their phone whether today's were ticked off.
+- **Birthdays** — listed in `config.yaml`, shown every year with the age.
 
 Calendars sync one-way and read-only: your phone stays the place you edit things,
 and the panel can't corrupt them. Events added on the panel live in its own
@@ -149,6 +156,42 @@ Full bill of materials and the Pi-vs-mini-PC tradeoff:
 [docs/hardware.md](docs/hardware.md). The short version — a 24" touch monitor, an
 N100 mini PC or Pi 5, an LD2410 sensor, and a VESA mount, for roughly $400–600
 depending mostly on the monitor.
+
+## Photo captions, medication, birthdays
+
+All optional, all off until you configure them.
+
+**Captions** are typed under each photo on the remote page and shown beside the
+clock in picture-frame mode.
+
+**Birthdays** go in `config.yaml` and recur every year; give a full year of
+birth and it shows the age ("Margaret turns 72"), or just `MM-DD` for the name
+alone. 29 February falls back to the 28th in non-leap years rather than
+disappearing for three years at a time.
+
+```yaml
+birthdays:
+  - {name: Margaret, date: "1954-03-12"}
+  - {name: Tom, date: "06-04", note: "Ring him in the morning"}
+
+medications:
+  - {name: "Morning pills", times: ["08:00"], notes: "With food"}
+  - {name: "Blood pressure tablet", times: ["08:00", "20:00"]}
+```
+
+**Medication** doses appear on the panel with a large *Mark as taken* button,
+and the remote page summarises the day: how many were ticked off, how many are
+past their time, when the next one is due.
+
+> This is a memory aid, not a medical device. Nothing alarms, escalates, or
+> notifies anyone. An untouched tick means *nobody pressed the button*, which
+> is not the same as *the medicine wasn't taken* — don't build a care plan on
+> the assumption that it is.
+
+**Time to get ready** takes over the screen before an appointment that has a
+location, or a dose that's due — `display.leaving_soon` in `config.yaml`. The
+chime is off by default; a wall that unexpectedly makes a noise is startling in
+a way a changed picture isn't, and it can't be silenced from across the room.
 
 ## Work schedules
 
