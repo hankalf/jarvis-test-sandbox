@@ -56,9 +56,14 @@ them to everything else.
 `--ssh` is worth having: if the panel ever needs attention, you can get a shell
 without asking someone to plug in a keyboard.
 
-WireGuard directly is equivalent if you already run it. A Cloudflare Tunnel also
-works but puts a third party in front of the medical calendar — Tailscale keeps
-the traffic between your own devices.
+WireGuard directly is equivalent if you already run it.
+
+**If you want a custom URL and no VPN app on every phone** — `calendar.yourdomain.com`
+opened in any browser — that's a Cloudflare Tunnel with Cloudflare Access in
+front, written up in [public-access.md](public-access.md). It trades a third
+party seeing the traffic for real per-person logins you can revoke, which
+Tailscale's device-level sharing doesn't give you. Read that document's first
+section before setting it up: the tunnel changes how the app sees "local".
 
 ## Put it on the phone's home screen
 

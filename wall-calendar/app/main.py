@@ -168,6 +168,18 @@ async def _refresh_loop(feeds: CalendarFeeds, controller: DisplayController, int
 app = FastAPI(title="Wall Calendar Display", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Cheap hardening that matters once this is reachable from outside."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    # Without this, a token in the query string would ride along in the Referer
+    # to any third-party resource the page loaded.
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    return response
+
+
 # --- API ----------------------------------------------------------------
 
 

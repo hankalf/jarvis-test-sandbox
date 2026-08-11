@@ -376,6 +376,14 @@ def test_uploading_the_same_name_twice_keeps_both(tmp_path: Path):
     assert len(photos.list_photos(photo_dir)) == 2
 
 
+@pytest.fixture(autouse=True)
+def _clear_rate_limiter():
+    from app import auth
+    auth.reset_failures()
+    yield
+    auth.reset_failures()
+
+
 @pytest.fixture()
 def secured_client(tmp_path: Path, monkeypatch):
     """A server with a token set, talking to a non-loopback client."""
@@ -449,6 +457,85 @@ def test_photo_upload_and_delete_over_the_api(secured_client):
     assert secured_client.get("/api/photos").json()["items"][0]["name"] == name
     assert secured_client.delete(f"/api/photos/{name}", headers=headers).status_code == 200
     assert secured_client.get("/api/photos").json()["items"] == []
+
+
+@pytest.mark.parametrize(
+    "header",
+    ["x-forwarded-for", "x-real-ip", "cf-connecting-ip", "forwarded", "x-forwarded-host", "cf-ray"],
+)
+def test_a_proxy_on_localhost_does_not_inherit_loopback_trust(secured_client, header):
+    """A tunnel connector or reverse proxy on the same host connects to
+    127.0.0.1, so without this every request from the internet would arrive
+    looking local and skip the token entirely."""
+    from app import auth
+
+    auth.reset_failures()
+    proxied = TestClient(secured_client.app, client=("127.0.0.1", 40000))
+    with proxied:
+        assert proxied.get("/api/status", headers={header: "203.0.113.9"}).status_code == 401
+        assert proxied.post(
+            "/api/events",
+            headers={header: "203.0.113.9"},
+            json={"title": "X", "start": "2026-08-11T08:00:00", "end": "2026-08-11T09:00:00"},
+        ).status_code == 401
+        # ...and the token still works through the proxy.
+        assert proxied.get(
+            "/api/status",
+            headers={header: "203.0.113.9", "X-Wall-Token": "s3cret-token-value-long"},
+        ).status_code == 200
+
+
+def test_genuine_loopback_still_skips_the_token(secured_client):
+    from app import auth
+
+    auth.reset_failures()
+    local = TestClient(secured_client.app, client=("127.0.0.1", 40000))
+    with local:
+        assert local.get("/api/status").status_code == 200
+
+
+def test_trust_loopback_false_demands_the_token_even_locally(tmp_path: Path, monkeypatch):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "timezone: America/New_York\ncalendars: []\ndata_dir: data\n"
+        "display:\n  photo_dir: photos\n"
+        "remote:\n  token: s3cret-token-value-long\n  trust_loopback: false\n"
+    )
+    monkeypatch.setenv("WALLDISPLAY_CONFIG", str(config_file))
+    for module in [m for m in list(sys.modules) if m.startswith("app.")]:
+        del sys.modules[module]
+    from app import auth
+    from app.main import app
+
+    auth.reset_failures()
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        assert client.get("/api/status").status_code == 401
+        assert client.get(
+            "/api/status", headers={"X-Wall-Token": "s3cret-token-value-long"}
+        ).status_code == 200
+
+
+def test_repeated_bad_codes_are_rate_limited(secured_client):
+    from app import auth
+
+    auth.reset_failures()
+    remote = TestClient(secured_client.app, client=("198.51.100.7", 40000))
+    with remote:
+        codes = [
+            remote.get("/api/status", headers={"X-Wall-Token": "wrong"}).status_code
+            for _ in range(auth.MAX_FAILURES + 2)
+        ]
+    assert codes[0] == 401
+    assert codes[-1] == 429, "brute-forcing the code should eventually be throttled"
+    auth.reset_failures()
+
+
+def test_security_headers_are_present(client):
+    headers = client.get("/remote").headers
+    assert headers["X-Content-Type-Options"] == "nosniff"
+    assert headers["X-Frame-Options"] == "DENY"
+    # A token in the query string must not leak to third parties via Referer.
+    assert headers["Referrer-Policy"] == "no-referrer"
 
 
 def test_status_warns_when_no_token_is_configured(client):

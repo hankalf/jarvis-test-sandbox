@@ -243,9 +243,16 @@ python3 -c "import secrets; print(secrets.token_urlsafe(24))"   # paste into rem
 sudo systemctl restart walldisplay
 ```
 
-To reach it from outside the house, install Tailscale on the device rather than
-forwarding a port. Full walkthrough, including sharing access with a sibling:
-[docs/remote-access.md](docs/remote-access.md).
+Two ways to reach it from outside the house, neither involving a port forward:
+
+- **Tailscale** — simplest, private, but everyone needs the app installed.
+  [docs/remote-access.md](docs/remote-access.md).
+- **A custom URL like `calendar.yourdomain.com`, no VPN app** — a Cloudflare
+  Tunnel with Cloudflare Access in front. [docs/public-access.md](docs/public-access.md).
+
+If you publish it publicly, read the first section of that second document:
+a tunnel connector talks to the app from 127.0.0.1, and the panel trusts
+127.0.0.1, so `remote.trust_loopback: false` is not optional there.
 
 ## Security
 

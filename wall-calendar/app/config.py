@@ -51,6 +51,12 @@ DEFAULTS: dict[str, Any] = {
         "enabled": True,
         "token": "",
         "device_name": "Wall Calendar",
+        # Requests from 127.0.0.1 skip the token, so the panel's own browser
+        # needs no credential. Set false when something on this same host
+        # proxies to the app (tunnel connector, nginx) and you want the token
+        # demanded even then. Proxied requests are already refused the loopback
+        # shortcut automatically; this is the belt to that's braces.
+        "trust_loopback": True,
         "max_upload_mb": 40,
         "resize_long_edge": 2560,
     },

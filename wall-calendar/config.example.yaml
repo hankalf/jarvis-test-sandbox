@@ -83,6 +83,14 @@ remote:
   # The panel's own browser always works -- it connects over loopback.
   token: ""
   device_name: "Mom's Wall Calendar"
+  # The panel's own browser connects from 127.0.0.1 and skips the token --
+  # touching the screen is already physical access. Set this false when
+  # anything on the same host proxies to the app (a Cloudflare Tunnel
+  # connector, nginx), so the code is demanded even from "local" requests.
+  # Proxied requests are detected and refused the shortcut anyway, but if you
+  # publish this on the internet, set it false and be certain.
+  # See docs/public-access.md.
+  trust_loopback: true
   max_upload_mb: 40
   # Uploads are downscaled to this on the long edge and saved as JPEG. A phone
   # photo is ~4000px; a wall panel is 1080-1440px, so this saves a lot of work

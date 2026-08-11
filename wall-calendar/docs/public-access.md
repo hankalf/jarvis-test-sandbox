@@ -1,0 +1,181 @@
+# A custom URL, reachable from anywhere, without a VPN
+
+Yes — `calendar.yourdomain.com` in any browser, no VPN app, no port forwarding,
+no exposing your home IP. A **Cloudflare Tunnel** makes an outbound-only
+connection from a container on your Proxmox host to Cloudflare, and Cloudflare
+publishes the hostname. Nothing needs to be open on your router.
+
+The important part is what goes *in front of it*. Read the next section before
+the setup.
+
+## Read this first: the tunnel breaks the app's own auth
+
+The panel's browser skips the access code because it connects from 127.0.0.1 —
+touching the screen is already physical access. **A tunnel connector also
+connects to 127.0.0.1.** Left alone, that means every request arriving from the
+internet looks local, and the token is never asked for.
+
+The app now detects this: any request carrying a proxy header
+(`X-Forwarded-For`, `CF-Connecting-IP`, and similar) is refused the loopback
+shortcut and must present the token. Belt and braces, set this explicitly when
+you publish it:
+
+```yaml
+remote:
+  trust_loopback: false     # the panel is on this host, so nothing is "local"
+```
+
+With `trust_loopback: false`, **the panel's own browser needs the token too**.
+Point the kiosk at `http://127.0.0.1:8080/?token=YOUR_TOKEN` once — it stores
+the code and strips it from the URL. In
+`/etc/systemd/system/walldisplay-kiosk.service`:
+
+```ini
+Environment=WALLDISPLAY_URL=http://127.0.0.1:8080/?token=YOUR_TOKEN
+```
+
+## Don't rely on the access code alone
+
+The token is a single shared string, it appears in URLs you send people, and
+there is no way to revoke one person's copy. That is fine on a LAN. On a public
+hostname holding medical appointments, a home address, and family photos, it is
+the only thing between the internet and all of it.
+
+So put **Cloudflare Access** in front. It's free for up to 50 users, and it
+means the app isn't publicly reachable at all — Cloudflare demands a login at
+the edge and only then forwards the request. A stranger who finds the URL gets
+a login page, not your calendar.
+
+That gives you two independent layers: Access decides *who gets to the app*, the
+token decides *what may write to it*. Either alone is weaker than both.
+
+## Setup
+
+### 1. A tunnel container on Proxmox
+
+Create a small LXC (Debian 12, 512 MB RAM, 4 GB disk is plenty), or install
+`cloudflared` directly in whichever VM/LXC runs the calendar.
+
+```bash
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
+  | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] \
+https://pkg.cloudflare.com/cloudflared bookworm main" \
+  | sudo tee /etc/apt/sources.list.d/cloudflared.list
+sudo apt update && sudo apt install cloudflared
+```
+
+An unprivileged LXC is the right call here: the connector needs no special
+capabilities, and keeping it separate from the calendar means a problem in one
+isn't automatically a problem in the other.
+
+### 2. Create the tunnel
+
+In the Cloudflare dashboard: **Zero Trust → Networks → Tunnels → Create a
+tunnel**, choose *Cloudflared*, name it, and it gives you a one-line install
+command with a token. Run that on the LXC and it registers itself as a service.
+
+Then add a **public hostname** on the tunnel:
+
+| Field | Value |
+|---|---|
+| Subdomain | `calendar` |
+| Domain | your domain |
+| Service type | `HTTP` |
+| URL | `192.168.1.x:8080` (the calendar's LAN address, or `localhost:8080` if same box) |
+
+Your domain has to be on Cloudflare (nameservers pointed at them). A `.com` is
+about $10/year; Cloudflare's own registrar sells at cost.
+
+HTTPS is handled at the edge automatically — you get a valid certificate with
+nothing to renew.
+
+### 3. Put Access in front — do not skip this
+
+**Zero Trust → Access → Applications → Add an application → Self-hosted.**
+
+| Field | Value |
+|---|---|
+| Application domain | `calendar.yourdomain.com` |
+| Session duration | 1 month (so family aren't re-logging-in constantly) |
+
+Add a policy: **Allow**, with rule type **Emails** and the addresses of the two
+or three people who should have access. They get a one-time PIN by email the
+first time on each device, then nothing for a month. Google/Apple sign-in works
+too if everyone already has one.
+
+Removing someone later is deleting their email from the policy — which is the
+thing a shared token can never do.
+
+### 4. Bypass Access for the phone Shortcut only
+
+Cloudflare Access will block the iPhone Shortcut that forwards appointment texts
+(step 2 of the phase-2 importer), because a Shortcut can't do an interactive
+login. Two options:
+
+- **Service token** (better): Zero Trust → Access → Service Auth → create a
+  token, then add a policy of action **Service Auth** for the path
+  `/api/import/message`. The Shortcut sends `CF-Access-Client-Id` and
+  `CF-Access-Client-Secret` headers alongside `X-Wall-Token`.
+- **Bypass that one path**: a policy with action **Bypass** on
+  `/api/import/message`. Simpler, but then that endpoint is protected by the
+  wall-calendar token alone.
+
+### 5. Check it
+
+From a phone on mobile data, not your wifi:
+
+```
+https://calendar.yourdomain.com/remote
+```
+
+You should get the Cloudflare login, then the access-code gate, then the page.
+
+Verify the tunnel didn't reopen the loopback hole:
+
+```bash
+# From another machine, without a token -- must be 401, not 200
+curl -s -o /dev/null -w '%{http_code}\n' https://calendar.yourdomain.com/api/status
+```
+
+A `200` there means something is wrong — check `trust_loopback: false` is set
+and the service was restarted.
+
+## The honest comparison
+
+| | Custom domain | VPN app needed | Auth | Home IP exposed |
+|---|---|---|---|---|
+| **Cloudflare Tunnel + Access** | yes | no | Cloudflare login + token | no |
+| Cloudflare Tunnel alone | yes | no | **token only** | no |
+| Tailscale (what this repo defaulted to) | no (`*.ts.net`) | yes | device-level | no |
+| Tailscale Funnel | no | no | **token only** | no |
+| Port forward + DuckDNS + Caddy | yes | no | token only | **yes** |
+
+Tunnel **+ Access** is the only row that gets you a custom URL, no VPN, and real
+per-person authentication. Tunnel alone gets you the first two and leaves the
+medical calendar behind one shared string — workable, but know that's the trade.
+
+Port forwarding is the one to avoid. It publishes your home IP address and puts
+the app directly in the path of everything that scans the internet all day.
+
+## Things worth knowing
+
+**Cloudflare terminates TLS.** They can see the traffic — that's how the free
+tunnel works. For a family calendar that's a normal trade; if it isn't
+acceptable to you, Tailscale keeps traffic between your own devices and is the
+better fit.
+
+**The token stays useful.** Access controls the door; the token still gates
+writes, and it's what the Shortcut and any automation authenticate with.
+
+**Rotating access:** change `remote.token` and restart to invalidate every
+saved code at once. Remove an email from the Access policy to cut off one
+person without disturbing anyone else.
+
+**Rate limiting** is built in — ten bad codes from one address within five
+minutes gets a 429 for a while. That's damping, not a defence; Access is the
+defence.
+
+**Uptime:** the tunnel is outbound, so it survives a changing home IP address
+and needs no dynamic DNS. If the Proxmox host reboots, make sure the LXC is set
+to start on boot, or the URL goes dark until you notice.
