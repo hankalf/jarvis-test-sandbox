@@ -1035,3 +1035,91 @@ def test_config_edits_add_missing_keys_and_blocks(tmp_path: Path):
         copy.write_text(example.read_text())
         set_in_remote(copy, "trust_loopback", "false")
         assert yaml.safe_load(copy.read_text())["remote"]["trust_loopback"] is False
+
+
+def test_env_vars_override_the_config_file(tmp_path: Path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("timezone: America/New_York\nserver:\n  port: 8080\n")
+
+    cfg = Config.load(config_file, env={
+        "PORT": "3000",
+        "WALLDISPLAY_DATA_DIR": "/data",
+        "WALLDISPLAY_PHOTO_DIR": "/data/photos",
+        "WALLDISPLAY_TOKEN": "a-long-enough-access-code",
+        "WALLDISPLAY_TRUST_LOOPBACK": "false",
+        "WALLDISPLAY_TEXT_SCALE": "1.4",
+    })
+    assert cfg.server["port"] == 3000
+    assert cfg.data_dir == Path("/data")
+    assert cfg.photo_dir == Path("/data/photos")
+    assert cfg.db_path == Path("/data/walldisplay.db")
+    assert cfg.remote["token"] == "a-long-enough-access-code"
+    assert cfg.remote["trust_loopback"] is False
+    assert cfg.client_settings()["textScale"] == 1.4
+    # Untouched keys still come from the file.
+    assert cfg.client_settings()["timezone"] == "America/New_York"
+
+
+def test_explicit_port_beats_the_platform_port(tmp_path: Path):
+    cfg = Config.load(tmp_path / "none.yaml", env={"PORT": "3000", "WALLDISPLAY_PORT": "9999"})
+    assert cfg.server["port"] == 9999
+    # Empty is treated as unset, not as a value.
+    assert Config.load(tmp_path / "none.yaml", env={"PORT": ""}).server["port"] == 8080
+
+
+def test_whole_config_can_arrive_as_one_variable(tmp_path: Path):
+    cfg = Config.load(tmp_path / "none.yaml", env={
+        "WALLDISPLAY_CONFIG_YAML": (
+            "timezone: Europe/London\n"
+            "calendars:\n"
+            "  - {name: Work, url: 'https://example.com/w.ics'}\n"
+            "medications:\n"
+            "  - {name: Morning pills, times: ['08:00']}\n"
+        ),
+        "WALLDISPLAY_TIMEZONE": "Asia/Tokyo",
+    })
+    assert [c["name"] for c in cfg.calendars] == ["Work"]
+    assert cfg.calendars[0]["color"], "a colour should be assigned from the palette"
+    assert cfg.medications[0]["name"] == "Morning pills"
+    # An individual variable outranks the blob.
+    assert cfg.client_settings()["timezone"] == "Asia/Tokyo"
+
+
+def test_bad_env_value_names_the_variable(tmp_path: Path):
+    with pytest.raises(ValueError, match="WALLDISPLAY_TRUST_LOOPBACK"):
+        Config.load(tmp_path / "none.yaml", env={"WALLDISPLAY_TRUST_LOOPBACK": "maybe"})
+
+
+@pytest.mark.parametrize("env", [
+    {"RAILWAY_ENVIRONMENT": "production"},
+    {"RAILWAY_SERVICE_ID": "svc_123"},
+    {"WALLDISPLAY_PUBLIC": "1"},
+])
+def test_public_hosting_never_trusts_loopback(tmp_path: Path, env: dict):
+    """The platform's router reaches the app over loopback, so trusting it
+    would give every visitor the panel's unauthenticated access."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("remote:\n  trust_loopback: true\n")
+
+    cfg = Config.load(config_file, env=env)
+    assert cfg.public is True
+    assert cfg.remote["trust_loopback"] is False
+
+    # A wall panel keeps the shortcut it relies on.
+    assert Config.load(config_file, env={}).remote["trust_loopback"] is True
+
+
+def test_public_deployment_refuses_to_start_without_a_code(tmp_path: Path):
+    from app.auth import InsecurePublicDeployment, enforce_public_safety
+
+    env = {"RAILWAY_ENVIRONMENT": "production"}
+    blank = Config.load(tmp_path / "none.yaml", env=env)
+    with pytest.raises(InsecurePublicDeployment, match="not set"):
+        enforce_public_safety(blank)
+
+    short = Config.load(tmp_path / "none.yaml", env={**env, "WALLDISPLAY_TOKEN": "hunter2"})
+    with pytest.raises(InsecurePublicDeployment, match="shorter than"):
+        enforce_public_safety(short)
+
+    ok = Config.load(tmp_path / "none.yaml", env={**env, "WALLDISPLAY_TOKEN": "x" * 24})
+    enforce_public_safety(ok)  # does not raise

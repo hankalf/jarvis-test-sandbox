@@ -249,6 +249,9 @@ Two ways to reach it from outside the house, neither involving a port forward:
   [docs/remote-access.md](docs/remote-access.md).
 - **A custom URL like `calendar.yourdomain.com`, no VPN app** — a Cloudflare
   Tunnel with Cloudflare Access in front. [docs/public-access.md](docs/public-access.md).
+- **Hosted, no hardware at all** — the server can run on Railway instead of in
+  the house. [docs/railway.md](docs/railway.md). Note the trade: the panel then
+  depends on your home internet being up, where today it does not.
 
 If you publish it publicly, read the first section of that second document:
 a tunnel connector talks to the app from 127.0.0.1, and the panel trusts

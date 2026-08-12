@@ -168,6 +168,31 @@ class TokenGuard:
             raise HTTPException(status_code=401, detail="Bad or missing token")
 
 
+class InsecurePublicDeployment(RuntimeError):
+    """Raised instead of serving a public URL that anyone could write to."""
+
+
+def enforce_public_safety(config) -> None:
+    """Refuse to start a public instance that has no access code.
+
+    Without a token `TokenGuard` opens every write path -- deliberately, so a
+    calendar on a home LAN needs no ceremony. On a public hostname the same
+    behaviour publishes the medical appointments and hands strangers a delete
+    button, so here it is a startup failure rather than a warning nobody reads.
+    """
+    token = str(config.remote.get("token") or "")
+    if len(token) >= MIN_TOKEN_LENGTH:
+        return
+    problem = "is shorter than %d characters" % MIN_TOKEN_LENGTH if token else "is not set"
+    raise InsecurePublicDeployment(
+        f"Refusing to start: this instance is served publicly, but the access code {problem}.\n"
+        "Without one, anyone with the URL can read and change the calendar.\n\n"
+        "Set WALLDISPLAY_TOKEN to a long random string, e.g.\n"
+        "    python3 -c 'import secrets; print(secrets.token_urlsafe(24))'\n\n"
+        "Set WALLDISPLAY_PUBLIC=0 only if this really is not reachable from the internet."
+    )
+
+
 def token_warnings(config) -> list[str]:
     """Surfaced on the status endpoint so the caregiver page can nag."""
     warnings = []

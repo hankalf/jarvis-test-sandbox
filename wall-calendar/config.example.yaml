@@ -1,5 +1,10 @@
 # Wall calendar display configuration.
 # Copy to config.yaml and edit. Paths are resolved relative to this file.
+#
+# Every setting here can also come from the environment, which is how hosted
+# deployments configure it -- WALLDISPLAY_TOKEN, WALLDISPLAY_DATA_DIR and so
+# on, or a whole config in WALLDISPLAY_CONFIG_YAML. Variables win over this
+# file, so an unexplained setting is worth checking there. See docs/railway.md.
 
 timezone: America/New_York
 

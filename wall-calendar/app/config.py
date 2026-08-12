@@ -1,8 +1,17 @@
-"""Configuration loading: YAML on top of defaults, with paths resolved."""
+"""Configuration loading: YAML on top of defaults, with paths resolved.
+
+A file is the normal case: the calendar runs on a box you can edit. Hosted
+platforms have no editable file and no shell worth relying on, so the same
+settings can arrive as environment variables, and a whole config can arrive as
+one `WALLDISPLAY_CONFIG_YAML` blob. Precedence, weakest first:
+
+    defaults  <  config.yaml  <  WALLDISPLAY_CONFIG_YAML  <  individual vars
+"""
 
 from __future__ import annotations
 
 import copy
+import os
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -85,6 +94,84 @@ DEFAULTS: dict[str, Any] = {
 PALETTE = ["#1d5fbf", "#b8541a", "#1f7a5a", "#7a3fa0", "#8a6d13", "#b02a45"]
 
 
+TRUTHY = {"1", "true", "yes", "on"}
+FALSEY = {"0", "false", "no", "off"}
+
+
+def as_bool(value: str) -> bool:
+    text = str(value).strip().lower()
+    if text in TRUTHY:
+        return True
+    if text in FALSEY:
+        return False
+    raise ValueError(f"expected a yes/no value, got {value!r}")
+
+
+# (environment variable, path into the config, how to read it). Applied in
+# order, so a later entry wins -- WALLDISPLAY_PORT beats the platform's PORT.
+ENV_OVERRIDES: list[tuple[str, tuple[str, ...], Any]] = [
+    ("TZ", ("timezone",), str),
+    ("WALLDISPLAY_TIMEZONE", ("timezone",), str),
+    ("WALLDISPLAY_HOST", ("server", "host"), str),
+    # Railway, Heroku, Fly and friends all name the assigned port this way.
+    ("PORT", ("server", "port"), int),
+    ("WALLDISPLAY_PORT", ("server", "port"), int),
+    ("WALLDISPLAY_DATA_DIR", ("data_dir",), str),
+    ("WALLDISPLAY_PHOTO_DIR", ("display", "photo_dir"), str),
+    ("WALLDISPLAY_DEFAULT_MODE", ("display", "default_mode"), str),
+    # A secret does not belong in a file that gets committed by accident.
+    ("WALLDISPLAY_TOKEN", ("remote", "token"), str),
+    ("WALLDISPLAY_DEVICE_NAME", ("remote", "device_name"), str),
+    ("WALLDISPLAY_TRUST_LOOPBACK", ("remote", "trust_loopback"), as_bool),
+    ("WALLDISPLAY_THEME", ("accessibility", "theme"), str),
+    ("WALLDISPLAY_TEXT_SCALE", ("accessibility", "text_scale"), float),
+    ("ANTHROPIC_API_KEY", ("importer", "api_key"), str),
+]
+
+# Set by the platform, not by us -- their presence is how the app knows it is
+# being served straight onto the internet rather than onto a hallway wall.
+PUBLIC_PLATFORM_VARS = ("RAILWAY_ENVIRONMENT", "RAILWAY_SERVICE_ID", "RAILWAY_PROJECT_ID")
+
+
+def _assign(data: dict, path: tuple[str, ...], value: Any) -> None:
+    cursor = data
+    for key in path[:-1]:
+        target = cursor.get(key)
+        if not isinstance(target, dict):
+            target = {}
+            cursor[key] = target
+        cursor = target
+    cursor[path[-1]] = value
+
+
+def env_overlay(env: dict[str, str] | None = None) -> dict:
+    """The individual environment variables, as a config-shaped mapping."""
+    env = os.environ if env is None else env
+    out: dict[str, Any] = {}
+    for name, path, coerce in ENV_OVERRIDES:
+        raw = env.get(name)
+        if raw is None or raw == "":
+            continue
+        try:
+            _assign(out, path, coerce(raw))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name}: {exc}") from exc
+    return out
+
+
+def is_public_platform(env: dict[str, str] | None = None) -> bool:
+    """True when this instance answers the open internet directly.
+
+    On a wall panel the app is behind a front door; on a hosting platform the
+    URL is the front door, which changes what is safe to allow by default.
+    """
+    env = os.environ if env is None else env
+    explicit = env.get("WALLDISPLAY_PUBLIC")
+    if explicit:
+        return as_bool(explicit)
+    return any(env.get(name) for name in PUBLIC_PLATFORM_VARS)
+
+
 def _deep_merge(base: dict, override: dict | None) -> dict:
     out = copy.deepcopy(base)
     for key, value in (override or {}).items():
@@ -99,14 +186,36 @@ class Config:
     def __init__(self, data: dict, base_dir: Path) -> None:
         self._data = data
         self.base_dir = base_dir
+        self.public = False
 
     @classmethod
-    def load(cls, path: str | Path) -> "Config":
+    def load(cls, path: str | Path, env: dict[str, str] | None = None) -> "Config":
+        env = os.environ if env is None else env
         p = Path(path).expanduser().resolve()
         raw = yaml.safe_load(p.read_text()) if p.exists() else {}
         if raw is not None and not isinstance(raw, dict):
             raise ValueError(f"{p} must contain a YAML mapping at the top level")
-        return cls(_deep_merge(DEFAULTS, raw), p.parent)
+        data = _deep_merge(DEFAULTS, raw)
+
+        # A whole config as one variable, for platforms with no writable file.
+        inline = env.get("WALLDISPLAY_CONFIG_YAML")
+        if inline:
+            parsed = yaml.safe_load(inline)
+            if parsed is not None and not isinstance(parsed, dict):
+                raise ValueError("WALLDISPLAY_CONFIG_YAML must be a YAML mapping")
+            data = _deep_merge(data, parsed)
+
+        data = _deep_merge(data, env_overlay(env))
+
+        # Nothing is "local" when the URL is the front door: the platform's
+        # router reaches the app over loopback, so trusting loopback there
+        # would hand every visitor the panel's own unauthenticated access.
+        if is_public_platform(env):
+            data["remote"]["trust_loopback"] = False
+
+        config = cls(data, p.parent)
+        config.public = is_public_platform(env)
+        return config
 
     def _resolve(self, value: str) -> Path:
         p = Path(value).expanduser()

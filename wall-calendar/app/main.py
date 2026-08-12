@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import photos as photo_lib
-from .auth import TokenGuard, token_warnings
+from .auth import TokenGuard, enforce_public_safety, token_warnings
 from .calendars import CalendarFeeds
 from .config import Config
 from . import occasions
@@ -53,7 +53,17 @@ CONFIG_PATH = Path(
 # Loaded at import rather than in lifespan so the static mounts below can be
 # registered in the right order -- the catch-all "/" mount must come last.
 CONFIG = Config.load(CONFIG_PATH)
+
+# Before anything is served, not in lifespan: a public instance with no access
+# code must never accept a single request.
+if CONFIG.public:
+    enforce_public_safety(CONFIG)
+    log.info("public deployment: loopback trust off, access code required")
+
+# Hosted platforms hand over an empty filesystem, so create both rather than
+# assuming the checkout shipped them.
 CONFIG.photo_dir.mkdir(parents=True, exist_ok=True)
+CONFIG.data_dir.mkdir(parents=True, exist_ok=True)
 
 # `write` covers anything that changes what the panel shows; `remote` covers
 # the caregiver surface, which stays shut when remote access is switched off.

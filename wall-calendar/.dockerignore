@@ -1,0 +1,22 @@
+# The build context is uploaded before anything is built, and .venv alone is
+# ~280 MB of the wrong platform's wheels. Keeping it out is most of the build
+# time on a hosted builder.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local instance state. `photos/` and `data/` are this household's pictures and
+# appointments -- they belong in a mounted volume, never baked into an image.
+config.yaml
+data/
+photos/
+*.db
+
+.git/
+.gitignore
+tests/
+docs/
+setup/
+README.md
+docker-compose.yml
