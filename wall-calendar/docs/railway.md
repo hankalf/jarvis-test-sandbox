@@ -26,13 +26,17 @@ the connection is at least as reliable as the house allows.
 
 ## Setup
 
-### 1. Point Railway at this folder
+### 1. Point Railway at the repo
 
-New project → Deploy from GitHub repo. Then in the service's **Settings →
-Source**, set **Root Directory** to `wall-calendar`. Railway then finds
-`railway.json` and `Dockerfile` and stops trying to build the repository root.
+New project → Deploy from GitHub repo. Railway picks up `railway.json` and
+`Dockerfile` from the repository root and needs nothing else.
 
-The build needs no configuration beyond that. `railway.json` sets the
+If this project sits inside a larger repo rather than at its own root, set
+**Settings → Source → Root Directory** to the folder holding this file's
+parent (e.g. `wall-calendar`), or Railway will try to build the repo root and
+fail to find the Dockerfile.
+
+`railway.json` sets the
 healthcheck to `/api/health`, which is unauthenticated on purpose — it reports
 liveness and never content.
 

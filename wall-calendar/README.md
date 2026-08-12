@@ -288,7 +288,7 @@ on the network**, and don't port-forward the panel — use Tailscale.
 ## Development
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 cp config.example.yaml config.yaml
 .venv/bin/python -m uvicorn app.main:app --reload --port 8080
 .venv/bin/python -m pytest tests/ -q

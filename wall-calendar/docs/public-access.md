@@ -76,7 +76,7 @@ shell (node → Shell) or `ssh -t` works; `ssh host 'bash -s' < script` does not
 and the script says so rather than half-running.
 
 ```bash
-scp -r wall-calendar/setup root@192.168.14.100:/root/wc-setup
+scp -r setup root@192.168.14.100:/root/wc-setup
 ssh -t root@192.168.14.100 'bash /root/wc-setup/deploy-tunnel-lxc.sh'
 ```
 
