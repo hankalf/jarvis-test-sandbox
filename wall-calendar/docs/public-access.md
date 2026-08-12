@@ -70,10 +70,14 @@ without it the tunnel publishes an app that never asks for the token.
 
 ### 1. A tunnel container on Proxmox
 
-On the Proxmox host:
+The script runs **on the Proxmox host**, as root, in an interactive shell — it
+asks before every change, so it needs a terminal to ask on. Either the web UI
+shell (node → Shell) or `ssh -t` works; `ssh host 'bash -s' < script` does not,
+and the script says so rather than half-running.
 
 ```bash
-./setup/deploy-tunnel-lxc.sh
+scp -r wall-calendar/setup root@192.168.14.100:/root/wc-setup
+ssh -t root@192.168.14.100 'bash /root/wc-setup/deploy-tunnel-lxc.sh'
 ```
 
 It runs the pre-flight checks first (storage pool, bridge, free CTID, Debian 12
