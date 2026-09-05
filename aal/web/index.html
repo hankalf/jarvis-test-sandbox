@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AAL — AI Ad Lab</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070b14'/%3E%3Ctext x='16' y='22' font-family='system-ui' font-size='15' font-weight='800' text-anchor='middle' fill='%236f9dff'%3EA%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="mark">
+      <span class="mark-glyph">AAL</span>
+      <span class="mark-sub">AI AD LAB</span>
+    </div>
+    <button id="brand-name" class="brand" title="Rename the brand">Loading…</button>
+    <div class="spacer"></div>
+    <span class="pill" id="pill-nodes">— entries</span>
+    <span class="pill" id="pill-model">—</span>
+    <span class="pill" id="pill-render">—</span>
+    <nav class="tabs">
+      <button class="tab is-active" data-view="brain">Brain</button>
+      <button class="tab" data-view="studio">Studio</button>
+      <button class="tab" data-view="spy">Ad Spy</button>
+    </nav>
+  </header>
+
+  <main class="shell">
+    <section class="workspace">
+      <!-- ------------------------------------------------------ BRAIN -->
+      <div class="view is-active" id="view-brain">
+        <div class="view-bar">
+          <div class="seg" id="layout-toggle">
+            <button class="is-active" data-layout="graph">Graph</button>
+            <button data-layout="grid">Grid</button>
+          </div>
+          <input id="brain-search" class="input" type="search" placeholder="Search the brain…" />
+          <div class="spacer"></div>
+          <button class="btn" id="btn-add">+ Add entry</button>
+          <button class="btn ghost" id="btn-seed">Load demo brand</button>
+        </div>
+
+        <div class="brain-body">
+          <div class="graph-wrap" id="graph-wrap">
+            <canvas id="graph"></canvas>
+            <div class="graph-hint">drag to pan · scroll to zoom · click a node</div>
+          </div>
+
+          <div class="grid-wrap" id="grid-wrap" hidden></div>
+
+          <aside class="inspector" id="inspector" hidden>
+            <button class="inspector-close" id="inspector-close">×</button>
+            <div id="inspector-body"></div>
+          </aside>
+        </div>
+      </div>
+
+      <!-- ------------------------------------------------------ STUDIO -->
+      <div class="view" id="view-studio">
+        <div class="studio-results" id="studio-results">
+          <div class="empty">
+            <h2>Your studio is empty</h2>
+            <p>Generate an image or video below and it lands here.</p>
+          </div>
+        </div>
+
+        <div class="studio-dock">
+          <div class="composer">
+            <div class="composer-head">
+              <button class="btn ghost small" id="btn-templates">✦ Templates</button>
+              <div class="spacer"></div>
+              <div class="seg small" id="kind-toggle">
+                <button class="is-active" data-kind="image">Image</button>
+                <button data-kind="video">Video</button>
+              </div>
+            </div>
+            <textarea id="render-prompt" rows="4"
+              placeholder="Describe the ad. Be specific: exact product, materials, layout, typography…"></textarea>
+            <div class="composer-foot">
+              <div class="stepper">
+                <button id="count-minus">−</button><span id="count">1</span><button id="count-plus">+</button>
+              </div>
+              <div class="spacer"></div>
+              <span class="cost" id="cost">≈ $0.00</span>
+              <button class="btn primary" id="btn-generate">Generate</button>
+            </div>
+            <div class="templates" id="templates" hidden></div>
+          </div>
+
+          <div class="settings">
+            <h3>Image Settings</h3>
+            <label>Engine
+              <div class="seg small" id="engine-toggle"></div>
+            </label>
+            <label>Model <select id="model-select"></select></label>
+            <label>Aspect ratio <select id="aspect-select"></select></label>
+            <label>Resolution <select id="resolution-select"></select></label>
+            <div class="settings-cost">
+              <span>Estimated cost</span><strong id="settings-cost">$0.00</strong>
+            </div>
+            <p class="note" id="provider-note"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ------------------------------------------------------ AD SPY -->
+      <div class="view" id="view-spy">
+        <div class="view-bar">
+          <h2 class="view-title">Competitor ads in the wild</h2>
+          <div class="spacer"></div>
+          <button class="btn primary" id="btn-recommend">Recommend what to ship next</button>
+        </div>
+        <div class="spy-grid" id="spy-grid"></div>
+        <div class="recs" id="recs"></div>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------ CHAT DOCK -->
+    <aside class="chat">
+      <div class="chat-head">
+        <span class="dot"></span>
+        <strong>Ask the lab</strong>
+        <div class="spacer"></div>
+        <button class="icon" id="btn-speak" title="Speak replies aloud">🔊</button>
+        <button class="icon" id="btn-clear" title="Clear this conversation">⟲</button>
+      </div>
+      <div class="chat-log" id="chat-log">
+        <div class="chat-intro">
+          <p>I know this brand's identity, your taste, the claims you can make,
+             your angles, prompt bank, intel, competitor ads, offers and what
+             has performed.</p>
+          <p>Ask me anything, or tell me something new and I'll remember it.</p>
+        </div>
+      </div>
+      <form class="chat-input" id="chat-form">
+        <textarea id="chat-text" rows="2" placeholder="Ask, or tell me something to remember…"></textarea>
+        <div class="chat-actions">
+          <button type="button" class="icon" id="btn-mic" title="Dictate">🎙</button>
+          <button type="submit" class="btn primary small">Send</button>
+        </div>
+      </form>
+    </aside>
+  </main>
+
+  <div class="modal" id="modal" hidden>
+    <div class="modal-card">
+      <h3 id="modal-title">Add entry</h3>
+      <div id="modal-body"></div>
+      <div class="modal-foot">
+        <button class="btn ghost" id="modal-cancel">Cancel</button>
+        <button class="btn primary" id="modal-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/graph.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
